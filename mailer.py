@@ -2,6 +2,7 @@ import html
 import json
 import smtplib
 import ssl
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -23,7 +24,7 @@ def build_license_email_content(
     safe_key = html.escape(license_key)
     safe_mt5 = html.escape(str(mt5_login))
     safe_dl = html.escape(download_url or "https://aurumdesk.com")
-    safe_contact = html.escape(contact_email or "demajelio132@gmail.com")
+    safe_contact = html.escape(contact_email or "eliodemaj07@gmail.com")
     safe_ref = html.escape(order_ref or "MANUAL")
 
     plan_label = "Lifetime License (Never Expires)"
@@ -189,7 +190,7 @@ class Mailer:
             return {"ok": False, "provider": f"smtp:{host}:{port}", "error": str(exc)}
 
     def _send_brevo(self, api_key: str, to_email: str, subject: str, text_body: str, html_body: str) -> Dict[str, Any]:
-        sender_raw = self.env.get("SMTP_FROM", "") or self.env.get("PUBLIC_CONTACT_EMAIL", "demajelio132@gmail.com")
+        sender_raw = self.env.get("SMTP_FROM", "") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
         sender_name = "Aurum Desk"
         sender_email = sender_raw
         if "<" in sender_raw and ">" in sender_raw:
@@ -205,7 +206,12 @@ class Mailer:
         req = urllib.request.Request(
             "https://api.brevo.com/v3/smtp/email",
             data=payload,
-            headers={"Content-Type": "application/json", "api-key": api_key, "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "api-key": api_key,
+                "Accept": "application/json",
+                "User-Agent": "AurumDeskServer/1.0",
+            },
             method="POST",
         )
         try:
@@ -213,11 +219,18 @@ class Mailer:
                 if 200 <= r.status < 300:
                     return {"ok": True, "provider": "brevo_api", "error": ""}
                 return {"ok": False, "provider": "brevo_api", "error": f"HTTP {r.status}"}
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            return {"ok": False, "provider": "brevo_api", "error": f"HTTP {exc.code}: {detail or exc.reason}"}
         except Exception as exc:
             return {"ok": False, "provider": "brevo_api", "error": str(exc)}
 
     def _send_resend(self, api_key: str, to_email: str, subject: str, text_body: str, html_body: str) -> Dict[str, Any]:
-        sender = self.env.get("SMTP_FROM", "") or self.env.get("PUBLIC_CONTACT_EMAIL", "demajelio132@gmail.com")
+        sender = self.env.get("SMTP_FROM", "") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
         payload = json.dumps({
             "from": sender,
             "to": [to_email],
@@ -228,7 +241,11 @@ class Mailer:
         req = urllib.request.Request(
             "https://api.resend.com/emails",
             data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "AurumDeskServer/1.0",
+            },
             method="POST",
         )
         try:
@@ -236,6 +253,13 @@ class Mailer:
                 if 200 <= r.status < 300:
                     return {"ok": True, "provider": "resend_api", "error": ""}
                 return {"ok": False, "provider": "resend_api", "error": f"HTTP {r.status}"}
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            return {"ok": False, "provider": "resend_api", "error": f"HTTP {exc.code}: {detail or exc.reason}"}
         except Exception as exc:
             return {"ok": False, "provider": "resend_api", "error": str(exc)}
 
@@ -253,7 +277,7 @@ class Mailer:
     ) -> Dict[str, Any]:
         cfg = settings or (self.db.get_settings() if self.db else {})
         dl_url = cfg.get("download_url") or self.env.get("DEFAULT_DOWNLOAD_URL", "")
-        contact = cfg.get("admin_notify_email") or self.env.get("PUBLIC_CONTACT_EMAIL", "demajelio132@gmail.com")
+        contact = cfg.get("admin_notify_email") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
         content = build_license_email_content(
             customer_name=customer_name,
             license_key=license_key,
