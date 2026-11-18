@@ -109,7 +109,8 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(data)
 
     def _send_json(self, payload: Any, status: int = 200, extra_headers: Optional[Dict[str, str]] = None) -> None:
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -121,7 +122,11 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             for k, v in extra_headers.items():
                 self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(raw)
+        if self.command != "HEAD":
+            self.wfile.write(raw)
+
+    def do_HEAD(self) -> None:
+        self.do_GET()
 
     def _read_json(self, max_bytes: int = 3_500_000) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or "0")
