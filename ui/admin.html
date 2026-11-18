@@ -417,6 +417,10 @@
               <input class="input" id="setDownloadUrl" placeholder="https://drive.google.com/..." />
             </div>
             <div>
+              <label style="font-size:12px;color:var(--muted);">PayPal.me Payment URL (Used in Store Checkout Button)</label>
+              <input class="input" id="setPaypalUrl" placeholder="https://paypal.me/AurmDesk" />
+            </div>
+            <div>
               <label style="font-size:12px;color:var(--muted);">Admin Support / Copy Email</label>
               <input class="input" id="setAdminEmail" placeholder="eliodemaj07@gmail.com" />
             </div>
@@ -424,7 +428,7 @@
               <label style="font-size:12px;color:var(--muted);">Public Store Notice Banner (Optional)</label>
               <input class="input" id="setStoreNotice" placeholder="Leave blank or write announcement..." />
             </div>
-            <div style="display:flex;align-items:flex-end;gap:8px;">
+            <div style="display:flex;align-items:flex-end;gap:8px;grid-column:1 / -1;">
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;">
                 <input type="checkbox" id="setSendCopy" style="accent-color:#f5d57a;width:16px;height:16px;" />
                 Send copy of orders, MT5 switch requests &amp; keys to Admin Email
@@ -867,6 +871,7 @@
     function renderEmailsAndSettings() {
       const s = state.settings || {};
       if (document.activeElement.id !== 'setDownloadUrl') document.getElementById('setDownloadUrl').value = s.download_url || '';
+      if (document.activeElement.id !== 'setPaypalUrl') document.getElementById('setPaypalUrl').value = s.paypal_me_url || state.effective_paypal_me_url || '';
       if (document.activeElement.id !== 'setAdminEmail') document.getElementById('setAdminEmail').value = s.admin_notify_email || '';
       if (document.activeElement.id !== 'setStoreNotice') document.getElementById('setStoreNotice').value = s.store_notice || '';
       document.getElementById('setSendCopy').checked = s.send_admin_copy !== '0';
@@ -1127,6 +1132,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           download_url: document.getElementById('setDownloadUrl').value.trim(),
+          paypal_me_url: document.getElementById('setPaypalUrl').value.trim(),
           admin_notify_email: document.getElementById('setAdminEmail').value.trim(),
           store_notice: document.getElementById('setStoreNotice').value.trim(),
           send_admin_copy: document.getElementById('setSendCopy').checked ? '1' : '0',

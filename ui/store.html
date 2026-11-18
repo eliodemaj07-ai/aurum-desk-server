@@ -604,7 +604,7 @@
           <div style="margin-bottom:14px;">
             <div class="step-badge">Step 1 — Pay via PayPal</div>
             <a class="paypal-btn disabled" id="paypalPayBtn" href="#" target="_blank" rel="noopener">
-              Pay €0 with PayPal.me/AurumDesk
+              Pay €0 with PayPal.me/AurmDesk
             </a>
             <div style="font-size:11.5px;color:var(--muted);margin-top:5px;">
               After sending the PayPal payment, submit Step 2 below so Admin can approve and unlock your key.
@@ -904,7 +904,7 @@
   <div class="toast hidden" id="toastBox"></div>
 
   <script>
-    let catalog = { bots: [], bundles: [], paypal_me_url: 'https://paypal.me/AurumDesk', contact_email: 'eliodemaj07@gmail.com' };
+    let catalog = { bots: [], bundles: [], paypal_me_url: 'https://paypal.me/AurmDesk', contact_email: 'eliodemaj07@gmail.com' };
     let currentPlan = 'lifetime';
     let selectedBots = new Set(['zenith']);
     let selectedBundleId = '';
@@ -1614,9 +1614,11 @@
 
       const ppBtn = document.getElementById('paypalPayBtn');
       if (total > 0) {
-        const base = (catalog.paypal_me_url || 'https://paypal.me/AurumDesk').replace(/\/+$/, '');
+        const rawBase = (catalog.paypal_me_url || 'https://paypal.me/AurmDesk').trim().replace(/\/+$/, '');
+        const base = /^https?:\/\//i.test(rawBase) ? rawBase : ('https://' + rawBase.replace(/^\/+/, ''));
+        const labelHost = base.replace(/^https?:\/\//i, '');
         ppBtn.href = `${base}/${total}EUR`;
-        ppBtn.textContent = `Pay €${total} via PayPal.me/AurumDesk`;
+        ppBtn.textContent = `Pay €${total} via ${labelHost}`;
         ppBtn.classList.remove('disabled');
       } else {
         ppBtn.href = '#';
