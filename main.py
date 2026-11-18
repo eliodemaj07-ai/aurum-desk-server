@@ -146,6 +146,14 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             return None
         return user
 
+    def _effective_paypal_url(self, settings: Optional[Dict[str, str]] = None) -> str:
+        s = settings if settings is not None else self.db.get_settings()
+        raw = (s.get("paypal_me_url") or "").strip() or self.env_cfg.get("PAYPAL_ME_URL", "https://paypal.me/AurmDesk")
+        raw = raw.strip().rstrip("/")
+        if raw and not raw.lower().startswith(("http://", "https://")):
+            raw = "https://" + raw.lstrip("/")
+        return raw
+
     def _customer_cookie_header(self, user: Dict[str, Any]) -> str:
         token = sign_customer_token(
             self.env_cfg["SECRET_KEY"],
@@ -212,7 +220,7 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "bots": BOT_CATALOG,
                 "bundles": BUNDLE_CATALOG,
-                "paypal_me_url": self.env_cfg["PAYPAL_ME_URL"],
+                "paypal_me_url": self._effective_paypal_url(settings),
                 "contact_email": settings.get("admin_notify_email") or self.env_cfg["PUBLIC_CONTACT_EMAIL"],
                 "store_notice": settings.get("store_notice", ""),
             })
@@ -260,6 +268,7 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "Unauthorized"}, status=401)
                 return
             notif_data = self.db.get_notifications(limit=80)
+            settings = self.db.get_settings()
             self._send_json({
                 "ok": True,
                 "bots": BOT_CATALOG,
@@ -270,7 +279,8 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
                 "notifications": notif_data["items"],
                 "unread_count": notif_data["unread_count"],
                 "email_logs": self.db.get_email_logs(limit=60),
-                "settings": self.db.get_settings(),
+                "settings": settings,
+                "effective_paypal_me_url": self._effective_paypal_url(settings),
                 "metrics": self.db.get_dashboard_metrics(),
                 "is_postgres": self.db.is_postgres,
                 "mailer_configured": self.mailer.is_configured(),
@@ -699,9 +709,14 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/admin/api/settings":
-            allowed = {k: str(body[k]) for k in ("download_url", "admin_notify_email", "store_notice", "send_admin_copy") if k in body}
+            allowed = {k: str(body[k]) for k in ("download_url", "admin_notify_email", "store_notice", "send_admin_copy", "paypal_me_url") if k in body}
+            if "paypal_me_url" in allowed:
+                pp = allowed["paypal_me_url"].strip().rstrip("/")
+                if pp and not pp.lower().startswith(("http://", "https://")):
+                    pp = "https://" + pp.lstrip("/")
+                allowed["paypal_me_url"] = pp
             updated = self.db.update_settings(allowed)
-            self._send_json({"ok": True, "settings": updated})
+            self._send_json({"ok": True, "settings": updated, "effective_paypal_me_url": self._effective_paypal_url(updated)})
             return
 
         if path == "/admin/api/settings/test-email":

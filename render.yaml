@@ -10,7 +10,7 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.7"
       - key: PAYPAL_ME_URL
-        value: "https://paypal.me/AurumDesk"
+        value: "https://paypal.me/AurmDesk"
       - key: PUBLIC_CONTACT_EMAIL
         value: "eliodemaj07@gmail.com"
       - key: SMTP_HOST

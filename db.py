@@ -265,6 +265,7 @@ class Database:
                 self._ensure_default_setting(conn, "admin_notify_email", default_contact_email or "eliodemaj07@gmail.com")
                 self._ensure_default_setting(conn, "send_admin_copy", "1")
                 self._ensure_default_setting(conn, "store_notice", "")
+                self._ensure_default_setting(conn, "paypal_me_url", "")
                 conn.commit()
 
     def _ensure_default_setting(self, conn, key: str, value: str) -> None:

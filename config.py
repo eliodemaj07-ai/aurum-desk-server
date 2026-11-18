@@ -120,7 +120,7 @@ def get_env_config() -> Dict[str, str]:
         "SQLITE_PATH": os.environ.get("SQLITE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "aurum_server.db")),
         "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD", "AurumAdmin2026!").strip(),
         "SECRET_KEY": os.environ.get("SECRET_KEY", "dev-secret-change-in-production-aurum-2026").strip(),
-        "PAYPAL_ME_URL": os.environ.get("PAYPAL_ME_URL", "https://paypal.me/AurumDesk").strip().rstrip("/"),
+        "PAYPAL_ME_URL": os.environ.get("PAYPAL_ME_URL", "https://paypal.me/AurmDesk").strip().rstrip("/"),
         "PUBLIC_CONTACT_EMAIL": os.environ.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com").strip(),
         "SMTP_HOST": os.environ.get("SMTP_HOST", "smtp.gmail.com").strip(),
         "SMTP_PORT": os.environ.get("SMTP_PORT", "465").strip(),
