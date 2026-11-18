@@ -3,11 +3,9 @@ import hashlib
 import hmac
 import json
 import os
-import secrets
 import sys
 import time
 import urllib.parse
-from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
@@ -49,6 +47,35 @@ def verify_session_token(token: str, secret: str, max_age_sec: int = 86400 * 7) 
         return False
 
 
+def sign_customer_token(secret: str, user_id: int, token_version: int, issued_at: int) -> str:
+    payload = f"aurum_cust:{int(user_id)}:{int(token_version)}:{int(issued_at)}"
+    sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    raw = f"{payload}:{sig}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def verify_customer_token(token: str, secret: str, max_age_sec: int = 86400 * 30) -> Optional[Dict[str, int]]:
+    if not token:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+        parts = raw.split(":")
+        if len(parts) != 5 or parts[0] != "aurum_cust":
+            return None
+        user_id = int(parts[1])
+        token_version = int(parts[2])
+        issued_at = int(parts[3])
+        if time.time() - issued_at > max_age_sec:
+            return None
+        payload = f"{parts[0]}:{parts[1]}:{parts[2]}:{parts[3]}"
+        expected = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(parts[4], expected):
+            return None
+        return {"user_id": user_id, "token_version": token_version}
+    except Exception:
+        return None
+
+
 class AurumHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -63,7 +90,7 @@ class AurumHTTPServer(ThreadingHTTPServer):
 
 
 class AurumRequestHandler(BaseHTTPRequestHandler):
-    server_version = "AurumDeskServer/1.0"
+    server_version = "AurumDeskServer/1.1"
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -89,19 +116,45 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
     def _is_https(self) -> bool:
         return self.headers.get("X-Forwarded-Proto", "").lower() == "https"
 
-    def _is_admin(self) -> bool:
+    def _get_cookie(self, name: str) -> str:
         cookie_hdr = self.headers.get("Cookie", "")
         if not cookie_hdr:
-            return False
+            return ""
         c = SimpleCookie()
         try:
             c.load(cookie_hdr)
         except Exception:
-            return False
-        morsel = c.get("aurum_session")
-        if not morsel:
-            return False
-        return verify_session_token(morsel.value, self.env_cfg["SECRET_KEY"])
+            return ""
+        morsel = c.get(name)
+        return morsel.value if morsel else ""
+
+    def _is_admin(self) -> bool:
+        token = self._get_cookie("aurum_session")
+        return verify_session_token(token, self.env_cfg["SECRET_KEY"])
+
+    def _get_customer(self) -> Optional[Dict[str, Any]]:
+        token = self._get_cookie("aurum_customer_session")
+        parsed = verify_customer_token(token, self.env_cfg["SECRET_KEY"])
+        if not parsed:
+            return None
+        user = self.db.get_customer_by_id(parsed["user_id"])
+        if not user:
+            return None
+        if user.get("status") != "active" or not user.get("email_verified"):
+            return None
+        if int(user.get("token_version") or 1) != parsed["token_version"]:
+            return None
+        return user
+
+    def _customer_cookie_header(self, user: Dict[str, Any]) -> str:
+        token = sign_customer_token(
+            self.env_cfg["SECRET_KEY"],
+            int(user["id"]),
+            int(user.get("token_version") or 1),
+            int(time.time()),
+        )
+        sec_flag = "; Secure" if self._is_https() else ""
+        return f"aurum_customer_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={86400 * 30}{sec_flag}"
 
     def _send_html(self, data: bytes, status: int = 200) -> None:
         self.send_response(status)
@@ -141,7 +194,7 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path == "/" or path == "/index.html":
+        if path in ("/", "/index.html", "/account", "/account/"):
             self._send_html(self.server.store_html)  # type: ignore[attr-defined]
             return
 
@@ -165,13 +218,32 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/auth/me":
+            user = self._get_customer()
+            self._send_json({"ok": True, "authenticated": bool(user), "user": user})
+            return
+
+        if path == "/api/account/overview":
+            user = self._get_customer()
+            if not user:
+                self._send_json({"ok": False, "error": "Please sign in to view your account."}, status=401)
+                return
+            ov = self.db.get_customer_overview(int(user["id"]))
+            settings = self.db.get_settings()
+            dl_url = ""
+            if ov.get("has_active_license"):
+                dl_url = settings.get("download_url") or self.env_cfg["DEFAULT_DOWNLOAD_URL"]
+            ov["download_url"] = dl_url
+            ov["ok"] = True
+            self._send_json(ov)
+            return
+
         if path.startswith("/api/order-status/"):
             ref = urllib.parse.unquote(path.split("/api/order-status/", 1)[1]).strip()
             order = self.db.get_order_by_ref(ref, include_screenshot=False)
             if not order:
                 self._send_json({"ok": False, "error": "Order reference not found."}, status=404)
                 return
-            # Do not expose full license_key publicly on unauthenticated status tracker
             safe_order = {
                 "order_ref": order["order_ref"],
                 "customer_email": order["customer_email"],
@@ -193,6 +265,8 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
                 "bots": BOT_CATALOG,
                 "orders": self.db.get_orders(status_filter="all", include_screenshots=False),
                 "licenses": self.db.get_licenses(),
+                "mt5_requests": self.db.get_mt5_requests(status_filter="all"),
+                "users": self.db.get_users(),
                 "notifications": notif_data["items"],
                 "unread_count": notif_data["unread_count"],
                 "email_logs": self.db.get_email_logs(limit=60),
@@ -227,18 +301,212 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
 
-        # 1) Public customer order submission
-        if path == "/api/orders":
+        # ================= CUSTOMER AUTH & PORTAL =================
+        if path == "/api/auth/register":
             try:
+                reg = self.db.register_customer(
+                    full_name=str(body.get("full_name", "")),
+                    email=str(body.get("email", "")),
+                    password=str(body.get("password", "")),
+                )
+                user = reg["user"]
+                mail_res = self.mailer.send_verification_email(
+                    customer_name=user["full_name"],
+                    customer_email=user["email"],
+                    code=reg["code"],
+                    purpose="register",
+                )
+                self._send_json(
+                    {
+                        "ok": True,
+                        "verification_required": True,
+                        "email": user["email"],
+                        "email_sent": bool(mail_res.get("ok")),
+                        "email_error": "" if mail_res.get("ok") else mail_res.get("error", ""),
+                    },
+                    status=201,
+                )
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path == "/api/auth/resend-code":
+            try:
+                res = self.db.resend_verification_code(email=str(body.get("email", "")))
+                user = res["user"]
+                mail_res = self.mailer.send_verification_email(
+                    customer_name=user["full_name"],
+                    customer_email=user["email"],
+                    code=res["code"],
+                    purpose="register",
+                )
+                self._send_json({
+                    "ok": bool(mail_res.get("ok")),
+                    "email": user["email"],
+                    "error": "" if mail_res.get("ok") else mail_res.get("error", "Could not send verification email."),
+                }, status=200 if mail_res.get("ok") else 500)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path == "/api/auth/verify-email":
+            try:
+                user = self.db.verify_customer_email(
+                    email=str(body.get("email", "")),
+                    code=str(body.get("code", "")),
+                )
+                cookie = self._customer_cookie_header(user)
+                self._send_json({"ok": True, "user": user}, extra_headers={"Set-Cookie": cookie})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path == "/api/auth/login":
+            email_raw = str(body.get("email", ""))
+            password_raw = str(body.get("password", ""))
+            try:
+                user = self.db.authenticate_customer(email=email_raw, password=password_raw)
+                cookie = self._customer_cookie_header(user)
+                self._send_json({"ok": True, "user": user}, extra_headers={"Set-Cookie": cookie})
+            except PermissionError:
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": "Your email is not verified yet. Enter your 6-digit verification code or resend a new code.",
+                        "verification_required": True,
+                        "email": email_raw.strip().lower(),
+                    },
+                    status=403,
+                )
+            except Exception as exc:
+                time.sleep(0.25)
+                self._send_json({"ok": False, "error": str(exc)}, status=401)
+            return
+
+        if path == "/api/auth/logout":
+            self._send_json(
+                {"ok": True},
+                extra_headers={"Set-Cookie": "aurum_customer_session=; Path=/; Max-Age=0"},
+            )
+            return
+
+        if path == "/api/auth/forgot-password":
+            try:
+                res = self.db.request_password_reset(email=str(body.get("email", "")))
+                if res:
+                    user = res["user"]
+                    self.mailer.send_verification_email(
+                        customer_name=user["full_name"],
+                        customer_email=user["email"],
+                        code=res["code"],
+                        purpose="reset",
+                    )
+                self._send_json({
+                    "ok": True,
+                    "message": "If an active verified account exists for that email, a 6-digit reset code has been sent.",
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path == "/api/auth/reset-password":
+            try:
+                user = self.db.reset_password_with_code(
+                    email=str(body.get("email", "")),
+                    code=str(body.get("code", "")),
+                    new_password=str(body.get("new_password", "")),
+                )
+                cookie = self._customer_cookie_header(user)
+                self._send_json({"ok": True, "user": user}, extra_headers={"Set-Cookie": cookie})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path == "/api/account/profile":
+            user = self._get_customer()
+            if not user:
+                self._send_json({"ok": False, "error": "Please sign in first."}, status=401)
+                return
+            try:
+                updated = self.db.update_customer_profile(
+                    user_id=int(user["id"]),
+                    full_name=str(body.get("full_name", user["full_name"])),
+                    current_password=str(body.get("current_password", "")),
+                    new_password=str(body.get("new_password", "")),
+                )
+                cookie = self._customer_cookie_header(updated)
+                self._send_json({"ok": True, "user": updated}, extra_headers={"Set-Cookie": cookie})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path == "/api/account/mt5-switch":
+            user = self._get_customer()
+            if not user:
+                self._send_json({"ok": False, "error": "Please sign in first."}, status=401)
+                return
+            try:
+                req_row = self.db.create_mt5_switch_request(
+                    user_id=int(user["id"]),
+                    license_key=str(body.get("license_key", "")),
+                    new_mt5_login=str(body.get("new_mt5_login", "")),
+                    reason=str(body.get("reason", "")),
+                )
+                self.mailer.send_admin_alert_email(
+                    subject=f"[Aurum Desk] MT5 Switch Request: {req_row['license_key']}",
+                    message=(
+                        f"Customer: {req_row['customer_name']} ({req_row['customer_email']})\n"
+                        f"License Key: {req_row['license_key']}\n"
+                        f"From MT5 #{req_row['old_mt5_login']} -> To MT5 #{req_row['new_mt5_login']}\n"
+                        f"Reason: {req_row.get('reason') or 'Not specified'}\n\n"
+                        f"Open /admin to approve or decline."
+                    ),
+                    license_key=req_row["license_key"],
+                )
+                self._send_json({"ok": True, "request": req_row}, status=201)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        # 1) Customer order submission (Requires verified signed-in customer account)
+        if path == "/api/orders":
+            user = self._get_customer()
+            if not user:
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": "Please sign in or create a verified account before placing an order.",
+                        "auth_required": True,
+                    },
+                    status=401,
+                )
+                return
+            try:
+                cust_name = str(body.get("customer_name") or user["full_name"]).strip() or user["full_name"]
                 order = self.db.create_order(
-                    customer_name=str(body.get("customer_name", "")),
-                    customer_email=str(body.get("customer_email", "")),
+                    customer_name=cust_name,
+                    customer_email=user["email"],
                     mt5_login=str(body.get("mt5_login", "")),
                     plan_type=str(body.get("plan_type", "lifetime")),
                     bot_ids=list(body.get("bot_ids") or []),
                     bundle_id=str(body.get("bundle_id", "")),
                     paypal_tx=str(body.get("paypal_tx", "")),
                     screenshot_data=str(body.get("screenshot_data", "")),
+                    user_id=int(user["id"]),
+                )
+                self.mailer.send_admin_alert_email(
+                    subject=f"[Aurum Desk] New PayPal Order {order['order_ref']} (€{int(order['amount_eur'])})",
+                    message=(
+                        f"Order Ref: {order['order_ref']}\n"
+                        f"Customer: {order['customer_name']} ({order['customer_email']})\n"
+                        f"MT5 Account: #{order['mt5_login']}\n"
+                        f"Plan: {order['plan_type']}\n"
+                        f"EAs: {', '.join(order.get('bot_names') or [])}\n"
+                        f"Amount: €{order['amount_eur']}\n"
+                        f"PayPal TX: {order.get('paypal_tx') or 'Pending check'}\n\n"
+                        f"Open /admin to verify payment and approve."
+                    ),
+                    order_ref=order["order_ref"],
                 )
                 self._send_json({"ok": True, "order": self.db._format_order(order, include_screenshot=False)}, status=201)
             except Exception as exc:
@@ -310,6 +578,52 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             try:
                 ord_out = self.db.reject_order(ref, reason=str(body.get("reason", "")))
                 self._send_json({"ok": True, "order": ord_out})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path.startswith("/admin/api/mt5-requests/") and path.endswith("/approve"):
+            raw_id = path[len("/admin/api/mt5-requests/"):-len("/approve")].strip("/")
+            try:
+                res = self.db.approve_mt5_switch_request(int(raw_id), admin_note=str(body.get("admin_note", "")))
+                req_row = res["request"]
+                mail_res = self.mailer.send_mt5_switch_notification(
+                    customer_name=req_row["customer_name"],
+                    customer_email=req_row["customer_email"],
+                    license_key=req_row["license_key"],
+                    old_mt5=req_row["old_mt5_login"],
+                    new_mt5=req_row["new_mt5_login"],
+                    approved=True,
+                    note=req_row.get("admin_note", ""),
+                )
+                self._send_json({"ok": True, "request": req_row, "license": res["license"], "email_result": mail_res})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path.startswith("/admin/api/mt5-requests/") and path.endswith("/reject"):
+            raw_id = path[len("/admin/api/mt5-requests/"):-len("/reject")].strip("/")
+            try:
+                req_row = self.db.reject_mt5_switch_request(int(raw_id), reason=str(body.get("reason", "")))
+                mail_res = self.mailer.send_mt5_switch_notification(
+                    customer_name=req_row["customer_name"],
+                    customer_email=req_row["customer_email"],
+                    license_key=req_row["license_key"],
+                    old_mt5=req_row["old_mt5_login"],
+                    new_mt5=req_row["new_mt5_login"],
+                    approved=False,
+                    note=req_row.get("admin_note", ""),
+                )
+                self._send_json({"ok": True, "request": req_row, "email_result": mail_res})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        if path.startswith("/admin/api/users/") and path.endswith("/status"):
+            raw_id = path[len("/admin/api/users/"):-len("/status")].strip("/")
+            try:
+                user_out = self.db.update_user_status(int(raw_id), status=str(body.get("status", "")))
+                self._send_json({"ok": True, "user": user_out})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
@@ -416,6 +730,7 @@ def create_app_server(port: Optional[int] = None, env_override: Optional[Dict[st
         sqlite_path=env_cfg["SQLITE_PATH"],
         default_download_url=env_cfg["DEFAULT_DOWNLOAD_URL"],
         default_contact_email=env_cfg["PUBLIC_CONTACT_EMAIL"],
+        secret_key=env_cfg["SECRET_KEY"],
     )
     mailer = mailer_override if mailer_override is not None else Mailer(env_cfg, db=db)
 

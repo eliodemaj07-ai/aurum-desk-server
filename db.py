@@ -1,4 +1,6 @@
 import contextlib
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -22,12 +24,47 @@ def generate_order_ref() -> str:
     return f"AUR-{suffix}"
 
 
+def generate_6digit_code() -> str:
+    return str(100_000 + secrets.randbelow(900_000))
+
+
+def hash_password(password: str) -> str:
+    pwd = str(password or "")
+    if len(pwd) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pwd.encode("utf-8"), salt, 240_000)
+    return f"pbkdf2_sha256$240000${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        parts = str(stored_hash or "").split("$")
+        if len(parts) != 4 or parts[0] != "pbkdf2_sha256":
+            return False
+        iters = int(parts[1])
+        salt = bytes.fromhex(parts[2])
+        expected = bytes.fromhex(parts[3])
+        dk = hashlib.pbkdf2_hmac("sha256", str(password or "").encode("utf-8"), salt, iters)
+        return hmac.compare_digest(dk, expected)
+    except Exception:
+        return False
+
+
 class Database:
     """Unified persistence layer supporting PostgreSQL (Neon/Render) and local SQLite."""
 
-    def __init__(self, database_url: str = "", sqlite_path: str = "aurum_server.db", default_download_url: str = "", default_contact_email: str = "demajelio132@gmail.com"):
+    def __init__(
+        self,
+        database_url: str = "",
+        sqlite_path: str = "aurum_server.db",
+        default_download_url: str = "",
+        default_contact_email: str = "eliodemaj07@gmail.com",
+        secret_key: str = "aurum-default-secret",
+    ):
         self.database_url = (database_url or "").strip()
         self.sqlite_path = sqlite_path
+        self.secret_key = (secret_key or "aurum-default-secret").strip()
         self.is_postgres = self.database_url.startswith("postgres://") or self.database_url.startswith("postgresql://")
         self._lock = threading.RLock()
         self._pg_mod = None
@@ -81,13 +118,70 @@ class Database:
         cur.execute(self._adapt_sql(sql), params)
         return cur.rowcount
 
+    def _ensure_column(self, conn, table_name: str, column_name: str, column_def: str) -> None:
+        if self.is_postgres:
+            row = self._fetch_one(
+                conn,
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+                (table_name, column_name),
+            )
+            exists = row is not None
+        else:
+            cols = self._fetch_all(conn, f"PRAGMA table_info({table_name})")
+            exists = any(c.get("name") == column_name for c in cols)
+        if not exists:
+            self._execute(conn, f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+
     def init_schema(self, default_download_url: str = "", default_contact_email: str = "") -> None:
         id_col = "SERIAL PRIMARY KEY" if self.is_postgres else "INTEGER PRIMARY KEY AUTOINCREMENT"
         stmts = [
             f"""
+            CREATE TABLE IF NOT EXISTS users (
+                id {id_col},
+                full_name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                token_version INTEGER NOT NULL DEFAULT 1,
+                last_login_at INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS verification_codes (
+                id {id_col},
+                email TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                expires_at INTEGER NOT NULL,
+                used_at INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS mt5_requests (
+                id {id_col},
+                user_id INTEGER NOT NULL,
+                customer_email TEXT NOT NULL,
+                customer_name TEXT NOT NULL,
+                license_key TEXT NOT NULL,
+                old_mt5_login TEXT NOT NULL,
+                new_mt5_login TEXT NOT NULL,
+                reason TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                admin_note TEXT DEFAULT '',
+                created_at INTEGER NOT NULL,
+                reviewed_at INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS orders (
                 id {id_col},
                 order_ref TEXT UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL DEFAULT 0,
                 customer_name TEXT NOT NULL,
                 customer_email TEXT NOT NULL,
                 mt5_login TEXT NOT NULL,
@@ -108,6 +202,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS licenses (
                 id {id_col},
                 license_key TEXT UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL DEFAULT 0,
                 customer_name TEXT NOT NULL,
                 customer_email TEXT NOT NULL,
                 bound_mt5_login TEXT NOT NULL,
@@ -163,8 +258,11 @@ class Database:
                 for s in stmts:
                     cur.execute(s)
                 conn.commit()
+                # Safe migrations for pre-existing tables on Neon / SQLite
+                self._ensure_column(conn, "orders", "user_id", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "licenses", "user_id", "INTEGER NOT NULL DEFAULT 0")
                 self._ensure_default_setting(conn, "download_url", default_download_url or "https://aurumdesk.com/download-coming-soon")
-                self._ensure_default_setting(conn, "admin_notify_email", default_contact_email or "demajelio132@gmail.com")
+                self._ensure_default_setting(conn, "admin_notify_email", default_contact_email or "eliodemaj07@gmail.com")
                 self._ensure_default_setting(conn, "send_admin_copy", "1")
                 self._ensure_default_setting(conn, "store_notice", "")
                 conn.commit()
@@ -264,6 +362,579 @@ class Database:
             with self._connect() as conn:
                 return self._fetch_all(conn, "SELECT * FROM email_logs ORDER BY id DESC LIMIT ?", (int(limit),))
 
+    # ================= CUSTOMER ACCOUNTS & AUTH =================
+
+    def _norm_email(self, email: str) -> str:
+        clean = str(email or "").strip().lower()
+        if not clean or "@" not in clean or "." not in clean.split("@")[-1] or " " in clean:
+            raise ValueError("Please enter a valid email address.")
+        return clean
+
+    def _hash_code(self, email_norm: str, purpose: str, code: str) -> str:
+        msg = f"{email_norm}:{purpose}:{code.strip()}".encode("utf-8")
+        return hmac.new(self.secret_key.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+    def _format_user(self, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        out = dict(row)
+        out.pop("password_hash", None)
+        out["email_verified"] = bool(int(out.get("email_verified") or 0))
+        return out
+
+    def _link_customer_records_conn(self, conn, user_id: int, email_norm: str) -> None:
+        self._execute(
+            conn,
+            "UPDATE orders SET user_id = ? WHERE user_id = 0 AND LOWER(TRIM(customer_email)) = ?",
+            (int(user_id), email_norm),
+        )
+        self._execute(
+            conn,
+            "UPDATE licenses SET user_id = ? WHERE user_id = 0 AND LOWER(TRIM(customer_email)) = ?",
+            (int(user_id), email_norm),
+        )
+
+    def register_customer(self, full_name: str, email: str, password: str) -> Dict[str, Any]:
+        name_clean = str(full_name or "").strip()
+        if len(name_clean) < 2:
+            raise ValueError("Please enter your full name (at least 2 characters).")
+        email_norm = self._norm_email(email)
+        pwd_hash = hash_password(password)
+        now_ts = int(time.time())
+        code = generate_6digit_code()
+        code_hash = self._hash_code(email_norm, "register", code)
+
+        with self._lock:
+            with self._connect() as conn:
+                existing = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+                if existing:
+                    if int(existing.get("email_verified") or 0) == 1:
+                        raise ValueError("An account with this email already exists. Please sign in instead.")
+                    if existing.get("status") != "active":
+                        raise ValueError("This account is disabled. Please contact support.")
+                    self._execute(
+                        conn,
+                        "UPDATE users SET full_name = ?, password_hash = ?, updated_at = ? WHERE id = ?",
+                        (name_clean, pwd_hash, now_ts, int(existing["id"])),
+                    )
+                else:
+                    self._execute(
+                        conn,
+                        """
+                        INSERT INTO users (
+                            full_name, email, password_hash, email_verified, status,
+                            token_version, last_login_at, created_at, updated_at
+                        ) VALUES (?, ?, ?, 0, 'active', 1, 0, ?, ?)
+                        """,
+                        (name_clean, email_norm, pwd_hash, now_ts, now_ts),
+                    )
+
+                self._execute(
+                    conn,
+                    "UPDATE verification_codes SET used_at = ? WHERE email = ? AND purpose = 'register' AND used_at = 0",
+                    (now_ts, email_norm),
+                )
+                self._execute(
+                    conn,
+                    """
+                    INSERT INTO verification_codes (email, purpose, code_hash, attempts, expires_at, used_at, created_at)
+                    VALUES (?, 'register', ?, 0, ?, 0, ?)
+                    """,
+                    (email_norm, code_hash, now_ts + 900, now_ts),
+                )
+                conn.commit()
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+
+        return {"user": self._format_user(user_row), "code": code}
+
+    def resend_verification_code(self, email: str) -> Dict[str, Any]:
+        email_norm = self._norm_email(email)
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+                if not user_row:
+                    raise ValueError("No account found for this email.")
+                if int(user_row.get("email_verified") or 0) == 1:
+                    raise ValueError("This email is already verified. Please sign in.")
+                if user_row.get("status") != "active":
+                    raise ValueError("This account is disabled. Please contact support.")
+
+                latest = self._fetch_one(
+                    conn,
+                    "SELECT * FROM verification_codes WHERE email = ? AND purpose = 'register' ORDER BY id DESC LIMIT 1",
+                    (email_norm,),
+                )
+                if latest and (now_ts - int(latest.get("created_at") or 0)) < 15:
+                    raise ValueError("Please wait a few seconds before requesting a new code.")
+
+                code = generate_6digit_code()
+                code_hash = self._hash_code(email_norm, "register", code)
+                self._execute(
+                    conn,
+                    "UPDATE verification_codes SET used_at = ? WHERE email = ? AND purpose = 'register' AND used_at = 0",
+                    (now_ts, email_norm),
+                )
+                self._execute(
+                    conn,
+                    """
+                    INSERT INTO verification_codes (email, purpose, code_hash, attempts, expires_at, used_at, created_at)
+                    VALUES (?, 'register', ?, 0, ?, 0, ?)
+                    """,
+                    (email_norm, code_hash, now_ts + 900, now_ts),
+                )
+                conn.commit()
+        return {"user": self._format_user(user_row), "code": code}
+
+    def verify_customer_email(self, email: str, code: str) -> Dict[str, Any]:
+        email_norm = self._norm_email(email)
+        code_clean = str(code or "").strip()
+        if not code_clean.isdigit() or len(code_clean) != 6:
+            raise ValueError("Please enter the 6-digit verification code.")
+        now_ts = int(time.time())
+
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+                if not user_row:
+                    raise ValueError("Account not found.")
+                if user_row.get("status") != "active":
+                    raise ValueError("This account is disabled. Contact support.")
+
+                vc = self._fetch_one(
+                    conn,
+                    """
+                    SELECT * FROM verification_codes
+                    WHERE email = ? AND purpose = 'register' AND used_at = 0
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (email_norm,),
+                )
+                if not vc or now_ts > int(vc.get("expires_at") or 0):
+                    raise ValueError("Verification code expired or not found. Please request a new code.")
+                if int(vc.get("attempts") or 0) >= 5:
+                    raise ValueError("Too many incorrect attempts. Please request a new verification code.")
+
+                expected_hash = self._hash_code(email_norm, "register", code_clean)
+                if not hmac.compare_digest(expected_hash, str(vc.get("code_hash") or "")):
+                    self._execute(
+                        conn,
+                        "UPDATE verification_codes SET attempts = attempts + 1 WHERE id = ?",
+                        (int(vc["id"]),),
+                    )
+                    conn.commit()
+                    raise ValueError("Invalid verification code.")
+
+                was_verified = int(user_row.get("email_verified") or 0) == 1
+                self._execute(
+                    conn,
+                    "UPDATE verification_codes SET used_at = ? WHERE id = ?",
+                    (now_ts, int(vc["id"])),
+                )
+                self._execute(
+                    conn,
+                    "UPDATE users SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?",
+                    (now_ts, now_ts, int(user_row["id"])),
+                )
+                self._link_customer_records_conn(conn, int(user_row["id"]), email_norm)
+                conn.commit()
+                updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_row["id"]),))
+
+        if not was_verified and updated:
+            self.add_notification(
+                event_type="NEW_CUSTOMER",
+                severity="info",
+                title=f"New Verified Customer: {updated['full_name']}",
+                message=f"Customer account verified: {updated['full_name']} ({updated['email']})",
+            )
+        return self._format_user(updated) or {}
+
+    def authenticate_customer(self, email: str, password: str) -> Dict[str, Any]:
+        email_norm = self._norm_email(email)
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+                if not user_row or not verify_password(password, user_row.get("password_hash", "")):
+                    raise ValueError("Invalid email or password.")
+                if user_row.get("status") != "active":
+                    raise ValueError("Your account has been disabled. Please contact support.")
+                if int(user_row.get("email_verified") or 0) != 1:
+                    raise PermissionError("EMAIL_UNVERIFIED")
+
+                self._execute(
+                    conn,
+                    "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+                    (now_ts, now_ts, int(user_row["id"])),
+                )
+                self._link_customer_records_conn(conn, int(user_row["id"]), email_norm)
+                conn.commit()
+                updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_row["id"]),))
+                return self._format_user(updated) or {}
+
+    def request_password_reset(self, email: str) -> Optional[Dict[str, Any]]:
+        email_norm = self._norm_email(email)
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+                if not user_row or user_row.get("status") != "active" or int(user_row.get("email_verified") or 0) != 1:
+                    return None
+                code = generate_6digit_code()
+                code_hash = self._hash_code(email_norm, "reset", code)
+                self._execute(
+                    conn,
+                    "UPDATE verification_codes SET used_at = ? WHERE email = ? AND purpose = 'reset' AND used_at = 0",
+                    (now_ts, email_norm),
+                )
+                self._execute(
+                    conn,
+                    """
+                    INSERT INTO verification_codes (email, purpose, code_hash, attempts, expires_at, used_at, created_at)
+                    VALUES (?, 'reset', ?, 0, ?, 0, ?)
+                    """,
+                    (email_norm, code_hash, now_ts + 900, now_ts),
+                )
+                conn.commit()
+        return {"user": self._format_user(user_row), "code": code}
+
+    def reset_password_with_code(self, email: str, code: str, new_password: str) -> Dict[str, Any]:
+        email_norm = self._norm_email(email)
+        code_clean = str(code or "").strip()
+        if not code_clean.isdigit() or len(code_clean) != 6:
+            raise ValueError("Please enter the 6-digit reset code.")
+        pwd_hash = hash_password(new_password)
+        now_ts = int(time.time())
+
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE email = ?", (email_norm,))
+                if not user_row or user_row.get("status") != "active":
+                    raise ValueError("Invalid or expired reset code.")
+
+                vc = self._fetch_one(
+                    conn,
+                    """
+                    SELECT * FROM verification_codes
+                    WHERE email = ? AND purpose = 'reset' AND used_at = 0
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (email_norm,),
+                )
+                if not vc or now_ts > int(vc.get("expires_at") or 0):
+                    raise ValueError("Reset code expired. Please request a new code.")
+                if int(vc.get("attempts") or 0) >= 5:
+                    raise ValueError("Too many incorrect attempts. Please request a new reset code.")
+
+                expected_hash = self._hash_code(email_norm, "reset", code_clean)
+                if not hmac.compare_digest(expected_hash, str(vc.get("code_hash") or "")):
+                    self._execute(
+                        conn,
+                        "UPDATE verification_codes SET attempts = attempts + 1 WHERE id = ?",
+                        (int(vc["id"]),),
+                    )
+                    conn.commit()
+                    raise ValueError("Invalid reset code.")
+
+                self._execute(
+                    conn,
+                    "UPDATE verification_codes SET used_at = ? WHERE id = ?",
+                    (now_ts, int(vc["id"])),
+                )
+                self._execute(
+                    conn,
+                    """
+                    UPDATE users
+                    SET password_hash = ?, token_version = token_version + 1,
+                        last_login_at = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (pwd_hash, now_ts, now_ts, int(user_row["id"])),
+                )
+                conn.commit()
+                updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_row["id"]),))
+                return self._format_user(updated) or {}
+
+    def get_customer_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                return self._format_user(row)
+
+    def update_customer_profile(
+        self,
+        user_id: int,
+        full_name: str,
+        current_password: str = "",
+        new_password: str = "",
+    ) -> Dict[str, Any]:
+        name_clean = str(full_name or "").strip()
+        if len(name_clean) < 2:
+            raise ValueError("Full name must be at least 2 characters.")
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                if not user_row or user_row.get("status") != "active":
+                    raise ValueError("Account not found or disabled.")
+                if new_password:
+                    if not verify_password(current_password, user_row.get("password_hash", "")):
+                        raise ValueError("Current password is incorrect.")
+                    new_hash = hash_password(new_password)
+                    self._execute(
+                        conn,
+                        """
+                        UPDATE users
+                        SET full_name = ?, password_hash = ?, token_version = token_version + 1, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (name_clean, new_hash, now_ts, int(user_id)),
+                    )
+                else:
+                    self._execute(
+                        conn,
+                        "UPDATE users SET full_name = ?, updated_at = ? WHERE id = ?",
+                        (name_clean, now_ts, int(user_id)),
+                    )
+                conn.commit()
+                updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                return self._format_user(updated) or {}
+
+    def get_customer_overview(self, user_id: int) -> Dict[str, Any]:
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                if not user_row:
+                    raise ValueError("Account not found.")
+                email_norm = str(user_row["email"]).strip().lower()
+                lic_rows = self._fetch_all(
+                    conn,
+                    "SELECT * FROM licenses WHERE user_id = ? OR LOWER(TRIM(customer_email)) = ? ORDER BY id DESC",
+                    (int(user_id), email_norm),
+                )
+                ord_rows = self._fetch_all(
+                    conn,
+                    "SELECT * FROM orders WHERE user_id = ? OR LOWER(TRIM(customer_email)) = ? ORDER BY id DESC",
+                    (int(user_id), email_norm),
+                )
+                req_rows = self._fetch_all(
+                    conn,
+                    "SELECT * FROM mt5_requests WHERE user_id = ? OR LOWER(TRIM(customer_email)) = ? ORDER BY id DESC",
+                    (int(user_id), email_norm),
+                )
+                licenses = [self._format_license(r) for r in lic_rows]
+                orders = [self._format_order(r, include_screenshot=False) for r in ord_rows]
+                has_active = any(l["status"] == "active" and not l["is_expired"] for l in licenses)
+                return {
+                    "user": self._format_user(user_row),
+                    "licenses": licenses,
+                    "orders": orders,
+                    "mt5_requests": req_rows,
+                    "has_active_license": has_active,
+                }
+
+    def create_mt5_switch_request(
+        self,
+        user_id: int,
+        license_key: str,
+        new_mt5_login: str,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        key = str(license_key or "").strip().upper()
+        new_mt5 = str(new_mt5_login or "").strip()
+        if not new_mt5.isdigit() or len(new_mt5) < 3:
+            raise ValueError("Please enter a valid numeric MT5 Account Number.")
+        reason_clean = str(reason or "").strip()[:400]
+        now_ts = int(time.time())
+
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                if not user_row or user_row.get("status") != "active":
+                    raise ValueError("Account not found or disabled.")
+                email_norm = str(user_row["email"]).strip().lower()
+
+                lic_row = self._fetch_one(conn, "SELECT * FROM licenses WHERE license_key = ?", (key,))
+                if not lic_row:
+                    raise ValueError("License key not found.")
+                if int(lic_row.get("user_id") or 0) != int(user_id) and str(lic_row.get("customer_email") or "").strip().lower() != email_norm:
+                    raise ValueError("This license key does not belong to your account.")
+
+                lic = self._format_license(lic_row)
+                if lic["status"] != "active" or lic["is_expired"]:
+                    raise ValueError("Only active, non-expired licenses can request an MT5 switch.")
+                old_mt5 = str(lic["bound_mt5_login"]).strip()
+                if new_mt5 == old_mt5:
+                    raise ValueError("New MT5 account must be different from your current locked MT5 account.")
+
+                existing_pending = self._fetch_one(
+                    conn,
+                    "SELECT id FROM mt5_requests WHERE license_key = ? AND status = 'pending'",
+                    (key,),
+                )
+                if existing_pending:
+                    raise ValueError("You already have a pending MT5 switch request for this license key.")
+
+                self._execute(
+                    conn,
+                    """
+                    INSERT INTO mt5_requests (
+                        user_id, customer_email, customer_name, license_key,
+                        old_mt5_login, new_mt5_login, reason, status, admin_note,
+                        created_at, reviewed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, 0)
+                    """,
+                    (int(user_id), email_norm, user_row["full_name"], key, old_mt5, new_mt5, reason_clean, now_ts),
+                )
+                conn.commit()
+                req_row = self._fetch_one(conn, "SELECT * FROM mt5_requests ORDER BY id DESC LIMIT 1")
+
+        self.add_notification(
+            event_type="MT5_SWITCH_REQUEST",
+            severity="gold",
+            title=f"MT5 Switch Request: {key}",
+            message=(
+                f"{user_row['full_name']} ({email_norm}) requests moving {key} "
+                f"from MT5 #{old_mt5} to #{new_mt5}. Reason: {reason_clean or 'Not specified'}"
+            ),
+            license_key=key,
+        )
+        return req_row or {}
+
+    def get_mt5_requests(self, status_filter: str = "all") -> List[Dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                if status_filter and status_filter != "all":
+                    return self._fetch_all(
+                        conn,
+                        "SELECT * FROM mt5_requests WHERE status = ? ORDER BY id DESC LIMIT 200",
+                        (status_filter,),
+                    )
+                return self._fetch_all(conn, "SELECT * FROM mt5_requests ORDER BY id DESC LIMIT 200")
+
+    def approve_mt5_switch_request(self, req_id: int, admin_note: str = "") -> Dict[str, Any]:
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                req_row = self._fetch_one(conn, "SELECT * FROM mt5_requests WHERE id = ?", (int(req_id),))
+                if not req_row:
+                    raise ValueError("MT5 switch request not found.")
+                if req_row["status"] != "pending":
+                    raise ValueError(f"Request #{req_id} was already {req_row['status']}.")
+
+                key = req_row["license_key"]
+                lic_row = self._fetch_one(conn, "SELECT * FROM licenses WHERE license_key = ?", (key,))
+                if not lic_row:
+                    raise ValueError(f"License {key} no longer exists.")
+
+                new_mt5 = str(req_row["new_mt5_login"]).strip()
+                self._execute(
+                    conn,
+                    "UPDATE licenses SET bound_mt5_login = ?, updated_at = ? WHERE license_key = ?",
+                    (new_mt5, now_ts, key),
+                )
+                self._execute(
+                    conn,
+                    "UPDATE mt5_requests SET status = 'approved', admin_note = ?, reviewed_at = ? WHERE id = ?",
+                    (admin_note or "Approved by Admin", now_ts, int(req_id)),
+                )
+                conn.commit()
+                updated_req = self._fetch_one(conn, "SELECT * FROM mt5_requests WHERE id = ?", (int(req_id),))
+                updated_lic = self._fetch_one(conn, "SELECT * FROM licenses WHERE license_key = ?", (key,))
+
+        self.add_notification(
+            event_type="MT5_SWITCH_APPROVED",
+            severity="success",
+            title=f"MT5 Switch Approved: {key}",
+            message=f"{req_row['customer_name']} ({req_row['customer_email']}) moved {key} from #{req_row['old_mt5_login']} to #{req_row['new_mt5_login']}.",
+            license_key=key,
+        )
+        return {"request": updated_req, "license": self._format_license(updated_lic)}
+
+    def reject_mt5_switch_request(self, req_id: int, reason: str = "") -> Dict[str, Any]:
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                req_row = self._fetch_one(conn, "SELECT * FROM mt5_requests WHERE id = ?", (int(req_id),))
+                if not req_row:
+                    raise ValueError("MT5 switch request not found.")
+                if req_row["status"] != "pending":
+                    raise ValueError(f"Request #{req_id} was already {req_row['status']}.")
+
+                note = reason or "Switch request declined by Admin"
+                self._execute(
+                    conn,
+                    "UPDATE mt5_requests SET status = 'rejected', admin_note = ?, reviewed_at = ? WHERE id = ?",
+                    (note, now_ts, int(req_id)),
+                )
+                conn.commit()
+                updated_req = self._fetch_one(conn, "SELECT * FROM mt5_requests WHERE id = ?", (int(req_id),))
+
+        self.add_notification(
+            event_type="MT5_SWITCH_REJECTED",
+            severity="warn",
+            title=f"MT5 Switch Rejected: {req_row['license_key']}",
+            message=f"{req_row['customer_name']} ({req_row['customer_email']}) declined: {note}",
+            license_key=req_row["license_key"],
+        )
+        return updated_req or {}
+
+    def get_users(self, search: str = "") -> List[Dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                users = self._fetch_all(conn, "SELECT * FROM users ORDER BY id DESC LIMIT 300")
+                licenses = self._fetch_all(conn, "SELECT user_id, customer_email, status, expires_at FROM licenses")
+                orders = self._fetch_all(conn, "SELECT user_id, customer_email, status, amount_eur FROM orders")
+                now_ts = int(time.time())
+
+                out: List[Dict[str, Any]] = []
+                q = search.strip().lower()
+                for u in users:
+                    fmt = self._format_user(u)
+                    uid = int(u["id"])
+                    email_norm = str(u["email"]).strip().lower()
+                    u_lics = [
+                        l for l in licenses
+                        if int(l.get("user_id") or 0) == uid or str(l.get("customer_email") or "").strip().lower() == email_norm
+                    ]
+                    u_ords = [
+                        o for o in orders
+                        if int(o.get("user_id") or 0) == uid or str(o.get("customer_email") or "").strip().lower() == email_norm
+                    ]
+                    fmt["license_count"] = len(u_lics)
+                    fmt["active_license_count"] = sum(
+                        1 for l in u_lics
+                        if l["status"] == "active" and (int(l.get("expires_at") or 0) == 0 or int(l["expires_at"]) > now_ts)
+                    )
+                    fmt["order_count"] = len(u_ords)
+                    fmt["total_spent_eur"] = round(
+                        sum(float(o.get("amount_eur") or 0) for o in u_ords if o["status"] == "approved"),
+                        2,
+                    )
+                    if not q or q in fmt["full_name"].lower() or q in fmt["email"].lower():
+                        out.append(fmt)
+                return out
+
+    def update_user_status(self, user_id: int, status: str) -> Dict[str, Any]:
+        if status not in ("active", "disabled"):
+            raise ValueError("Status must be 'active' or 'disabled'.")
+        now_ts = int(time.time())
+        with self._lock:
+            with self._connect() as conn:
+                user_row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                if not user_row:
+                    raise ValueError("User not found.")
+                self._execute(
+                    conn,
+                    "UPDATE users SET status = ?, token_version = token_version + 1, updated_at = ? WHERE id = ?",
+                    (status, now_ts, int(user_id)),
+                )
+                conn.commit()
+                updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
+                return self._format_user(updated) or {}
+
+    # ================= ORDERS & LICENSES =================
+
     def create_order(
         self,
         customer_name: str,
@@ -274,6 +945,7 @@ class Database:
         bundle_id: str = "",
         paypal_tx: str = "",
         screenshot_data: str = "",
+        user_id: int = 0,
     ) -> Dict[str, Any]:
         clean_bots = [b for b in dict.fromkeys(bot_ids) if b in BOT_BY_ID]
         if not clean_bots:
@@ -281,9 +953,7 @@ class Database:
         mt5_clean = str(mt5_login or "").strip()
         if not mt5_clean.isdigit() or len(mt5_clean) < 3:
             raise ValueError("Please enter a valid numeric MT5 Account Number.")
-        email_clean = str(customer_email or "").strip()
-        if "@" not in email_clean or "." not in email_clean:
-            raise ValueError("Please enter a valid email address.")
+        email_clean = self._norm_email(customer_email)
         name_clean = str(customer_name or "").strip()
         if len(name_clean) < 2:
             raise ValueError("Please enter your full name.")
@@ -294,6 +964,12 @@ class Database:
 
         with self._lock:
             with self._connect() as conn:
+                resolved_uid = int(user_id or 0)
+                if resolved_uid == 0:
+                    u = self._fetch_one(conn, "SELECT id FROM users WHERE email = ?", (email_clean,))
+                    if u:
+                        resolved_uid = int(u["id"])
+
                 ref = generate_order_ref()
                 while self._fetch_one(conn, "SELECT id FROM orders WHERE order_ref = ?", (ref,)):
                     ref = generate_order_ref()
@@ -302,13 +978,14 @@ class Database:
                     conn,
                     """
                     INSERT INTO orders (
-                        order_ref, customer_name, customer_email, mt5_login, plan_type,
+                        order_ref, user_id, customer_name, customer_email, mt5_login, plan_type,
                         bundle_id, bot_ids_json, amount_eur, paypal_tx, screenshot_data,
                         status, created_at, reviewed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0)
                     """,
                     (
                         ref,
+                        resolved_uid,
                         name_clean,
                         email_clean,
                         mt5_clean,
@@ -395,19 +1072,27 @@ class Database:
                 while self._fetch_one(conn, "SELECT id FROM licenses WHERE license_key = ?", (key,)):
                     key = generate_unique_license_key()
 
+                resolved_uid = int(order.get("user_id") or 0)
+                if resolved_uid == 0:
+                    email_norm = str(order.get("customer_email") or "").strip().lower()
+                    u = self._fetch_one(conn, "SELECT id FROM users WHERE email = ?", (email_norm,))
+                    if u:
+                        resolved_uid = int(u["id"])
+
                 plan = order["plan_type"]
                 expires_at = (now_ts + PLAN_MONTHLY_DAYS * 86400) if plan == "monthly" else 0
                 self._execute(
                     conn,
                     """
                     INSERT INTO licenses (
-                        license_key, customer_name, customer_email, bound_mt5_login,
+                        license_key, user_id, customer_name, customer_email, bound_mt5_login,
                         plan_type, bot_ids_json, amount_eur, status, expires_at,
                         order_ref, notes, last_seen_at, last_seen_ip, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, '', ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, '', ?, ?)
                     """,
                     (
                         key,
+                        resolved_uid,
                         order["customer_name"],
                         order["customer_email"],
                         order["mt5_login"],
@@ -485,12 +1170,18 @@ class Database:
         mt5_clean = str(mt5_login or "").strip()
         if not mt5_clean.isdigit() or len(mt5_clean) < 3:
             raise ValueError("Enter a valid numeric MT5 Account Number.")
+        email_norm = str(customer_email or "").strip().lower()
         plan = "monthly" if str(plan_type).lower() in ("monthly", "30_days", "30days") else "lifetime"
         now_ts = int(time.time())
         expires_at = (now_ts + max(1, int(days)) * 86400) if plan == "monthly" else 0
 
         with self._lock:
             with self._connect() as conn:
+                resolved_uid = 0
+                if email_norm:
+                    u = self._fetch_one(conn, "SELECT id FROM users WHERE email = ?", (email_norm,))
+                    if u:
+                        resolved_uid = int(u["id"])
                 key = generate_unique_license_key()
                 while self._fetch_one(conn, "SELECT id FROM licenses WHERE license_key = ?", (key,)):
                     key = generate_unique_license_key()
@@ -498,15 +1189,16 @@ class Database:
                     conn,
                     """
                     INSERT INTO licenses (
-                        license_key, customer_name, customer_email, bound_mt5_login,
+                        license_key, user_id, customer_name, customer_email, bound_mt5_login,
                         plan_type, bot_ids_json, amount_eur, status, expires_at,
                         order_ref, notes, last_seen_at, last_seen_ip, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, 'MANUAL', ?, 0, '', ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'MANUAL', ?, 0, '', ?, ?)
                     """,
                     (
                         key,
+                        resolved_uid,
                         customer_name.strip() or "Customer",
-                        customer_email.strip(),
+                        email_norm or customer_email.strip(),
                         mt5_clean,
                         plan,
                         json.dumps(clean_bots),
@@ -639,7 +1331,6 @@ class Database:
                 mt5_clean = str(mt5_login or "").strip()
                 bound = str(lic["bound_mt5_login"]).strip()
 
-                # Update last_seen telemetry
                 self._execute(
                     conn,
                     "UPDATE licenses SET last_seen_at = ?, last_seen_ip = ? WHERE license_key = ?",
@@ -682,7 +1373,6 @@ class Database:
                 "message": f"License active for MT5 #{bound} ({len(lic['bot_ids'])} EA unlocked).",
             }
 
-        # MT5 not yet connected on desktop client
         return {
             "ok": True,
             "mt5_verified": False,
@@ -702,6 +1392,8 @@ class Database:
             with self._connect() as conn:
                 orders = self._fetch_all(conn, "SELECT status, amount_eur FROM orders")
                 licenses = self._fetch_all(conn, "SELECT status, expires_at, amount_eur FROM licenses")
+                users_row = self._fetch_one(conn, "SELECT COUNT(*) AS cnt FROM users WHERE email_verified = 1")
+                mt5_row = self._fetch_one(conn, "SELECT COUNT(*) AS cnt FROM mt5_requests WHERE status = 'pending'")
                 now_ts = int(time.time())
                 pending_orders = sum(1 for o in orders if o["status"] == "pending")
                 approved_orders = sum(1 for o in orders if o["status"] == "approved")
@@ -716,4 +1408,6 @@ class Database:
                     "active_licenses": active_licenses,
                     "total_licenses": len(licenses),
                     "total_revenue_eur": total_revenue,
+                    "total_users": int((users_row or {}).get("cnt", 0)),
+                    "pending_mt5_requests": int((mt5_row or {}).get("cnt", 0)),
                 }

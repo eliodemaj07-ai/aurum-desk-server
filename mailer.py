@@ -54,6 +54,7 @@ def build_license_email_content(
         f"2. Extract the ZIP folder on your Windows PC.\n"
         f"3. Open MetaTrader 5 logged into account #{mt5_login} and enable 'Algo Trading'.\n"
         f"4. Launch Aurum_Desk.vbs and paste your Unique Key above.\n\n"
+        f"You can also view your keys and download link anytime in My Account on the store.\n"
         f"Need help or need to switch your MT5 account? Reply to {contact_email}.\n"
         f"Best regards,\nAurum Desk Team\n"
     )
@@ -98,6 +99,129 @@ def build_license_email_content(
         3. Double-click <strong>Aurum_Desk.vbs</strong> and enter your Unique License Key.<br/><br/>
         Support: <a href="mailto:{safe_contact}" style="color:#f5d57a;">{safe_contact}</a>
       </div>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    return {"subject": subject, "text": text_body, "html": html_body}
+
+
+def build_verification_code_email(
+    customer_name: str,
+    code: str,
+    purpose: str,
+    contact_email: str,
+) -> Dict[str, str]:
+    safe_name = html.escape(customer_name or "Trader")
+    safe_code = html.escape(code)
+    safe_contact = html.escape(contact_email or "eliodemaj07@gmail.com")
+    is_reset = purpose == "reset"
+
+    subject = "Aurum Desk — Password Reset Code" if is_reset else "Aurum Desk — Verify Your Email Address"
+    heading = "Password Reset Request" if is_reset else "Verify Your Aurum Desk Account"
+    intro = (
+        "Use the 6-digit code below to reset your Aurum Desk account password. This code expires in 15 minutes."
+        if is_reset
+        else "Welcome to Aurum Desk! Enter the 6-digit verification code below to activate your customer account. This code expires in 15 minutes."
+    )
+
+    text_body = (
+        f"Hello {customer_name or 'Trader'},\n\n"
+        f"{intro}\n\n"
+        f"Verification Code: {code}\n\n"
+        f"If you did not request this, you can safely ignore this email.\n"
+        f"Support: {contact_email}\n"
+        f"Aurum Desk Team\n"
+    )
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0b111d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#eef2f7;">
+  <div style="max-width:560px;margin:24px auto;background:#111827;border:1px solid rgba(245,213,122,0.35);border-radius:14px;overflow:hidden;">
+    <div style="background:linear-gradient(135deg,#141d2e,#1e1910);padding:20px 24px;border-bottom:1px solid rgba(245,213,122,0.22);">
+      <div style="font-size:20px;font-weight:800;color:#f5d57a;letter-spacing:0.6px;">AURUM DESK</div>
+      <div style="font-size:12px;color:#9aa5b5;margin-top:4px;">{html.escape(heading)}</div>
+    </div>
+    <div style="padding:24px;">
+      <p style="margin:0 0 12px;font-size:15px;">Hello <strong>{safe_name}</strong>,</p>
+      <p style="margin:0 0 18px;font-size:14px;line-height:1.55;color:#cfd6e0;">{html.escape(intro)}</p>
+      <div style="background:#0a0f18;border:1px solid rgba(245,213,122,0.55);border-radius:10px;padding:18px;text-align:center;margin-bottom:18px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.1px;color:#9aa5b5;margin-bottom:6px;">Your 6-Digit Code</div>
+        <div style="font-family:'Courier New',monospace;font-size:30px;font-weight:800;color:#f5d57a;letter-spacing:6px;">{safe_code}</div>
+      </div>
+      <p style="margin:0;font-size:12px;color:#8b949e;line-height:1.5;">
+        If you did not request this, you can safely ignore this message.<br/>
+        Support: <a href="mailto:{safe_contact}" style="color:#f5d57a;">{safe_contact}</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    return {"subject": subject, "text": text_body, "html": html_body}
+
+
+def build_mt5_switch_email(
+    customer_name: str,
+    license_key: str,
+    old_mt5: str,
+    new_mt5: str,
+    approved: bool,
+    note: str,
+    contact_email: str,
+) -> Dict[str, str]:
+    safe_name = html.escape(customer_name or "Trader")
+    safe_key = html.escape(license_key)
+    safe_old = html.escape(str(old_mt5))
+    safe_new = html.escape(str(new_mt5))
+    safe_note = html.escape(note or "")
+    safe_contact = html.escape(contact_email or "eliodemaj07@gmail.com")
+
+    if approved:
+        subject = f"Aurum Desk — MT5 Account Switch Approved ({license_key})"
+        status_title = "MT5 Account Switch Approved"
+        status_color = "#7ee787"
+        body_msg = (
+            f"Your request to rebind Unique License Key {license_key} from MT5 Account #{old_mt5} "
+            f"to MT5 Account #{new_mt5} has been approved. Please restart Aurum Desk or re-verify your key on MT5 #{new_mt5}."
+        )
+    else:
+        subject = f"Aurum Desk — MT5 Account Switch Declined ({license_key})"
+        status_title = "MT5 Account Switch Declined"
+        status_color = "#ffb3ad"
+        body_msg = (
+            f"Your request to move Unique License Key {license_key} from MT5 Account #{old_mt5} "
+            f"to #{new_mt5} could not be approved at this time. Your key remains bound to MT5 #{old_mt5}."
+        )
+
+    text_body = (
+        f"Hello {customer_name or 'Trader'},\n\n"
+        f"{body_msg}\n\n"
+        f"Admin Note: {note or 'None'}\n\n"
+        f"Need assistance? Reply to {contact_email}.\n"
+        f"Aurum Desk Team\n"
+    )
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0b111d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#eef2f7;">
+  <div style="max-width:580px;margin:24px auto;background:#111827;border:1px solid rgba(245,213,122,0.35);border-radius:14px;overflow:hidden;">
+    <div style="background:linear-gradient(135deg,#141d2e,#1e1910);padding:20px 24px;border-bottom:1px solid rgba(245,213,122,0.22);">
+      <div style="font-size:20px;font-weight:800;color:#f5d57a;letter-spacing:0.6px;">AURUM DESK</div>
+      <div style="font-size:12px;color:{status_color};font-weight:700;margin-top:4px;">{html.escape(status_title)}</div>
+    </div>
+    <div style="padding:24px;">
+      <p style="margin:0 0 12px;font-size:15px;">Hello <strong>{safe_name}</strong>,</p>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.55;color:#cfd6e0;">{html.escape(body_msg)}</p>
+      <div style="background:#0a0f18;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:14px 16px;font-size:13px;">
+        <div>License Key: <strong style="color:#f5d57a;font-family:'Courier New',monospace;">{safe_key}</strong></div>
+        <div style="margin-top:5px;">Previous MT5: <strong>#{safe_old}</strong> → Requested MT5: <strong>#{safe_new}</strong></div>
+        {f'<div style="margin-top:5px;color:#9aa5b5;">Note: {safe_note}</div>' if safe_note else ''}
+      </div>
+      <p style="margin:18px 0 0;font-size:12px;color:#8b949e;">
+        Support: <a href="mailto:{safe_contact}" style="color:#f5d57a;">{safe_contact}</a>
+      </p>
     </div>
   </div>
 </body>
@@ -297,7 +421,6 @@ class Mailer:
             order_ref=order_ref,
             license_key=license_key,
         )
-        # Optional copy to owner email when configured & different from customer
         if main_res.get("ok") and cfg.get("send_admin_copy", "1") == "1":
             copy_addr = (cfg.get("admin_notify_email") or "").strip()
             if copy_addr and copy_addr.lower() != customer_email.strip().lower():
@@ -310,3 +433,80 @@ class Mailer:
                     license_key=license_key,
                 )
         return main_res
+
+    def send_verification_email(
+        self,
+        customer_name: str,
+        customer_email: str,
+        code: str,
+        purpose: str = "register",
+        settings: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        cfg = settings or (self.db.get_settings() if self.db else {})
+        contact = cfg.get("admin_notify_email") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
+        content = build_verification_code_email(
+            customer_name=customer_name,
+            code=code,
+            purpose=purpose,
+            contact_email=contact,
+        )
+        return self.send_email(
+            to_email=customer_email,
+            subject=content["subject"],
+            text_body=content["text"],
+            html_body=content["html"],
+        )
+
+    def send_mt5_switch_notification(
+        self,
+        customer_name: str,
+        customer_email: str,
+        license_key: str,
+        old_mt5: str,
+        new_mt5: str,
+        approved: bool,
+        note: str = "",
+        settings: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        cfg = settings or (self.db.get_settings() if self.db else {})
+        contact = cfg.get("admin_notify_email") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
+        content = build_mt5_switch_email(
+            customer_name=customer_name,
+            license_key=license_key,
+            old_mt5=old_mt5,
+            new_mt5=new_mt5,
+            approved=approved,
+            note=note,
+            contact_email=contact,
+        )
+        return self.send_email(
+            to_email=customer_email,
+            subject=content["subject"],
+            text_body=content["text"],
+            html_body=content["html"],
+            license_key=license_key,
+        )
+
+    def send_admin_alert_email(
+        self,
+        subject: str,
+        message: str,
+        order_ref: str = "",
+        license_key: str = "",
+        settings: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        cfg = settings or (self.db.get_settings() if self.db else {})
+        if cfg.get("send_admin_copy", "1") != "1":
+            return None
+        admin_addr = (cfg.get("admin_notify_email") or "").strip()
+        if not admin_addr or "@" not in admin_addr or not self.is_configured():
+            return None
+        safe_msg = html.escape(message).replace("\n", "<br/>")
+        return self.send_email(
+            to_email=admin_addr,
+            subject=subject,
+            text_body=message,
+            html_body=f"<div style='font-family:Segoe UI,Arial,sans-serif;padding:16px;background:#111827;color:#eef2f7;border-radius:10px;border:1px solid #f5d57a;'><h3 style='color:#f5d57a;margin-top:0;'>{html.escape(subject)}</h3><p style='line-height:1.5;'>{safe_msg}</p></div>",
+            order_ref=order_ref,
+            license_key=license_key,
+        )

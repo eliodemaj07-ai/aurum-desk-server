@@ -1,0 +1,1746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aurum Desk — Gold EA Store &amp; Client Portal</title>
+  <style>
+    :root {
+      --bg: #0b111d;
+      --panel: rgba(17, 24, 38, 0.88);
+      --card: rgba(24, 32, 48, 0.84);
+      --border: rgba(245, 213, 122, 0.22);
+      --gold: #f5d57a;
+      --gold-dim: #c79c3a;
+      --text: #eef2f7;
+      --muted: #9aa5b5;
+      --green: #3fb950;
+      --blue: #58a6ff;
+      --red: #f85149;
+      --amber: #d29922;
+      --mono: "Cascadia Code", "Consolas", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse 80% 60% at 15% 10%, rgba(212, 175, 55, 0.16), transparent 55%),
+        radial-gradient(ellipse 70% 55% at 85% 20%, rgba(47, 129, 247, 0.12), transparent 55%),
+        linear-gradient(155deg, #0a101b 0%, #111927 55%, #19150d 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 14px;
+    }
+    .hidden { display: none !important; }
+    .mono { font-family: var(--mono); }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 11px 22px;
+      background: rgba(10, 15, 24, 0.82);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 0.6px;
+      color: var(--gold);
+      cursor: pointer;
+    }
+    .brand-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(245, 213, 122, 0.12);
+      border: 1px solid rgba(245, 213, 122, 0.35);
+      color: var(--gold);
+    }
+    .top-links {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .pill-link, .nav-btn {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.04);
+      cursor: pointer;
+    }
+    .pill-link:hover, .nav-btn:hover { color: var(--gold); border-color: var(--border); }
+    .nav-btn.active {
+      background: rgba(245, 213, 122, 0.15);
+      border-color: var(--gold);
+      color: var(--gold);
+    }
+    .btn-gold-sm {
+      background: linear-gradient(135deg, #e5b84b, #c79c3a);
+      border: none;
+      color: #0b111d;
+      font-weight: 800;
+      font-size: 12.5px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn-gold-sm:hover { filter: brightness(1.06); }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 22px 20px 52px;
+    }
+    .hero { text-align: center; margin-bottom: 22px; }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: clamp(24px, 3.6vw, 35px);
+      color: var(--gold);
+      letter-spacing: 0.4px;
+    }
+    .hero p {
+      margin: 0 auto;
+      max-width: 740px;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14.5px;
+    }
+    .notice-banner {
+      display: none;
+      margin: 0 auto 18px;
+      max-width: 860px;
+      padding: 10px 16px;
+      border-radius: 10px;
+      background: rgba(245, 213, 122, 0.11);
+      border: 1px solid rgba(245, 213, 122, 0.4);
+      color: var(--gold);
+      text-align: center;
+      font-weight: 600;
+    }
+    .notice-banner.show { display: block; }
+
+    .plan-switch-wrap { display: flex; justify-content: center; margin-bottom: 22px; }
+    .plan-switch {
+      display: inline-flex;
+      background: rgba(11, 16, 25, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 4px;
+      gap: 4px;
+    }
+    .plan-btn {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 20px;
+      border-radius: 9px;
+      font-weight: 700;
+      font-size: 13.5px;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .plan-btn.active {
+      background: linear-gradient(135deg, #e5b84b, #c79c3a);
+      color: #0b111d;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.45fr 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin: 0 0 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bundles-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 720px) { .bundles-grid { grid-template-columns: 1fr; } }
+    .bundle-card {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 14px;
+      cursor: pointer;
+      transition: 0.16s;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .bundle-card:hover { border-color: rgba(245, 213, 122, 0.55); transform: translateY(-1px); }
+    .bundle-card.selected {
+      border-color: var(--gold);
+      background: rgba(245, 213, 122, 0.08);
+      box-shadow: 0 0 0 1px rgba(245, 213, 122, 0.3);
+    }
+    .bundle-price { font-size: 22px; font-weight: 800; color: var(--gold); font-family: var(--mono); }
+    .save-tag {
+      display: inline-block;
+      font-size: 10.5px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(63, 185, 80, 0.16);
+      border: 1px solid rgba(63, 185, 80, 0.45);
+      color: #7ee787;
+    }
+
+    .eas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    @media (max-width: 640px) { .eas-grid { grid-template-columns: 1fr; } }
+    .ea-card {
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 12px;
+      padding: 13px 14px;
+      cursor: pointer;
+      transition: 0.15s;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ea-card:hover { border-color: rgba(245, 213, 122, 0.45); }
+    .ea-card.selected { border-color: var(--gold); background: rgba(245, 213, 122, 0.09); }
+    .ea-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ea-name { font-weight: 800; font-size: 15px; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .ea-price { font-family: var(--mono); font-weight: 800; font-size: 15px; color: var(--gold); }
+    .ea-tf { font-size: 11px; color: var(--blue); font-family: var(--mono); }
+    .ea-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+    .checkout-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      position: sticky;
+      top: 72px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+    }
+    .summary-box {
+      background: rgba(9, 13, 22, 0.72);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 9px;
+      margin-top: 9px;
+    }
+    .total-val { font-family: var(--mono); font-size: 26px; font-weight: 800; color: var(--gold); }
+    .step-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--gold);
+      margin-bottom: 6px;
+    }
+    .auth-gate-box {
+      background: rgba(245, 213, 122, 0.07);
+      border: 1px solid rgba(245, 213, 122, 0.38);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .paypal-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0070ba, #004f8a);
+      color: #ffffff;
+      font-weight: 800;
+      font-size: 14.5px;
+      text-decoration: none;
+      border: 1px solid rgba(121, 192, 255, 0.4);
+      cursor: pointer;
+    }
+    .paypal-btn:hover { filter: brightness(1.1); }
+    .paypal-btn.disabled { opacity: 0.45; pointer-events: none; }
+
+    .field { margin-bottom: 11px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; color: #cfd6e0; margin-bottom: 4px; }
+    .field input, .field textarea {
+      width: 100%;
+      background: rgba(9, 13, 22, 0.9);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: #fff;
+      border-radius: 8px;
+      padding: 9px 11px;
+      font-size: 13.5px;
+      outline: none;
+      font-family: inherit;
+    }
+    .field input:focus, .field textarea:focus { border-color: var(--gold); }
+    .field input[readonly] { color: var(--muted); background: rgba(9, 13, 22, 0.55); cursor: not-allowed; }
+
+    .submit-btn {
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #e5b84b, #c79c3a);
+      color: #0b111d;
+      font-weight: 800;
+      font-size: 14.5px;
+      cursor: pointer;
+    }
+    .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .alert-box {
+      padding: 10px 12px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      margin-top: 10px;
+      display: none;
+      line-height: 1.45;
+    }
+    .alert-box.ok { display: block; background: rgba(63,185,80,0.14); border: 1px solid rgba(63,185,80,0.45); color: #8be99a; }
+    .alert-box.err { display: block; background: rgba(248,81,73,0.14); border: 1px solid rgba(248,81,73,0.45); color: #ffb3ad; }
+
+    .status-checker { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .row-inline { display: flex; gap: 8px; }
+    .btn-sm {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.16);
+      color: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 12.5px;
+      white-space: nowrap;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-sm:hover { border-color: var(--gold); color: var(--gold); }
+
+    /* Client Portal Styles */
+    .portal-header {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 22px;
+      margin-bottom: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 720px) { .stats-row { grid-template-columns: 1fr; } }
+    .stat-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .stat-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); }
+    .stat-val { font-size: 26px; font-weight: 800; font-family: var(--mono); margin-top: 4px; color: var(--gold); }
+
+    .portal-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 18px;
+    }
+    .download-unlocked {
+      background: linear-gradient(135deg, rgba(245,213,122,0.12), rgba(63,185,80,0.08));
+      border: 1px solid rgba(245,213,122,0.45);
+    }
+    .lic-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 820px) { .lic-grid { grid-template-columns: 1fr; } }
+    .lic-card {
+      background: rgba(11, 16, 26, 0.85);
+      border: 1px solid rgba(255,255,255,0.11);
+      border-radius: 12px;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+    }
+    .pill.ok { border-color: rgba(63,185,80,0.45); color: #7ee787; background: rgba(63,185,80,0.14); }
+    .pill.warn { border-color: rgba(245,213,122,0.5); color: var(--gold); background: rgba(245,213,122,0.14); }
+    .pill.danger { border-color: rgba(248,81,73,0.5); color: #ffb3ad; background: rgba(248,81,73,0.15); }
+    .ea-chip {
+      display: inline-block;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(88,166,255,0.12);
+      border: 1px solid rgba(88,166,255,0.3);
+      color: #a5d6ff;
+      margin: 2px 4px 2px 0;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,0.07); text-align: left; }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); background: rgba(8,12,20,0.55); }
+
+    /* Modals */
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 8, 15, 0.85);
+      backdrop-filter: blur(6px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal {
+      width: min(440px, 100%);
+      max-height: 92vh;
+      overflow-y: auto;
+      background: #121a2a;
+      border: 1px solid rgba(245, 213, 122, 0.45);
+      border-radius: 14px;
+      padding: 20px 22px;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.65);
+    }
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      background: rgba(8, 12, 20, 0.8);
+      padding: 4px;
+      border-radius: 10px;
+      margin-bottom: 14px;
+    }
+    .auth-tab {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 8px;
+      border-radius: 7px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .auth-tab.active {
+      background: linear-gradient(135deg, #e5b84b, #c79c3a);
+      color: #0b111d;
+    }
+    .link-btn {
+      background: none;
+      border: none;
+      color: var(--gold);
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 200;
+      background: #152033;
+      border: 1px solid var(--gold);
+      color: #fff;
+      padding: 10px 15px;
+      border-radius: 9px;
+      font-weight: 600;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" onclick="switchView('store')">
+      <span>AURUM DESK</span>
+      <span class="brand-badge">XAUUSD • 7-EA Suite</span>
+    </div>
+    <div class="top-links">
+      <button class="nav-btn active" id="navStoreBtn" onclick="switchView('store')">Store</button>
+      <button class="nav-btn" id="navAccountBtn" onclick="openAccountOrLogin()">My Account</button>
+
+      <div id="guestAuthBtns" style="display:flex;gap:8px;align-items:center;">
+        <button class="pill-link" onclick="openAuthModal('login')">Sign In</button>
+        <button class="btn-gold-sm" onclick="openAuthModal('register')">Create Account</button>
+      </div>
+
+      <div id="userAuthBtns" class="hidden" style="display:flex;gap:8px;align-items:center;">
+        <span class="pill ok" id="topbarUserBadge">Account</span>
+        <button class="pill-link" onclick="logoutCustomer()">Sign Out</button>
+      </div>
+
+      <a class="pill-link" id="supportEmailLink" href="mailto:eliodemaj07@gmail.com">Support</a>
+      <a class="pill-link" href="/admin">Admin</a>
+    </div>
+  </header>
+
+  <!-- ==================== STORE VIEW ==================== -->
+  <main class="container" id="storeView">
+    <div class="hero">
+      <h1>Aurum Desk — Institutional Gold EA Licensing</h1>
+      <p>
+        Select individual Expert Advisors or a discounted bundle. Choose <strong>Lifetime</strong> or <strong>30-Day Subscription (€15/EA)</strong>,
+        sign in to your account, pay via PayPal, and manage your <strong>Unique License Keys</strong> &amp; downloads from your Client Portal.
+      </p>
+    </div>
+
+    <div class="notice-banner" id="storeNoticeBanner"></div>
+
+    <div class="plan-switch-wrap">
+      <div class="plan-switch">
+        <button class="plan-btn active" id="btnPlanLifetime" onclick="setPlan('lifetime')">Lifetime License (One-Time)</button>
+        <button class="plan-btn" id="btnPlanMonthly" onclick="setPlan('monthly')">Monthly Plan (30 Days • €15/EA)</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div>
+        <div class="section-title">
+          <span>Discounted Bundles</span>
+          <button class="btn-sm" onclick="clearSelection()">Clear Selection</button>
+        </div>
+        <div class="bundles-grid" id="bundlesGrid"></div>
+
+        <div class="section-title" style="margin-top:8px;">
+          <span>Individual Expert Advisors (Click to Select)</span>
+          <span style="font-size:11.5px;color:var(--muted);font-weight:500;">Custom mix supported</span>
+        </div>
+        <div class="eas-grid" id="easGrid"></div>
+      </div>
+
+      <aside class="checkout-panel">
+        <div class="section-title" style="margin-bottom:12px;">
+          <span>Checkout &amp; PayPal Payment</span>
+          <span id="planPill" style="font-size:11px;color:#7ee787;">LIFETIME</span>
+        </div>
+
+        <div class="summary-box">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Selected EAs (<span id="selectedCount">0</span>):</div>
+          <div id="selectedNames" style="font-weight:700;font-size:13.5px;min-height:20px;color:#fff;">None selected</div>
+          <div class="total-row">
+            <span style="color:var(--muted);font-weight:600;">Total Amount</span>
+            <span class="total-val" id="totalAmountDisplay">€0</span>
+          </div>
+        </div>
+
+        <!-- Gate when NOT logged in -->
+        <div id="checkoutAuthGate" class="auth-gate-box">
+          <div class="step-badge">Account Required Before Ordering</div>
+          <p style="margin:0 0 12px;font-size:13px;color:#cfd6e0;line-height:1.5;">
+            Create a free verified account or sign in first. Your orders, Unique License Keys, Windows software download, and MT5 account lock will live inside <strong>My Account</strong>.
+          </p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button class="submit-btn" type="button" onclick="openAuthModal('register')">Create Account</button>
+            <button class="btn-sm" type="button" style="padding:11px;" onclick="openAuthModal('login')">Sign In</button>
+          </div>
+        </div>
+
+        <!-- Full Checkout when logged in -->
+        <div id="checkoutUnlocked" class="hidden">
+          <div style="margin-bottom:14px;">
+            <div class="step-badge">Step 1 — Pay via PayPal</div>
+            <a class="paypal-btn disabled" id="paypalPayBtn" href="#" target="_blank" rel="noopener">
+              Pay €0 with PayPal.me/AurumDesk
+            </a>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:5px;">
+              After sending the PayPal payment, submit Step 2 below so Admin can approve and unlock your key.
+            </div>
+          </div>
+
+          <form id="orderForm" onsubmit="submitOrder(event)">
+            <div class="step-badge">Step 2 — Delivery &amp; MT5 Account Lock</div>
+            <div class="field">
+              <label for="fName">Full Name *</label>
+              <input id="fName" type="text" required placeholder="e.g. John Smith" />
+            </div>
+            <div class="field">
+              <label for="fEmail">Account Email (Verified) *</label>
+              <input id="fEmail" type="email" required readonly />
+            </div>
+            <div class="field">
+              <label for="fMt5">MT5 Account Number (Locked to 1 Account) *</label>
+              <input id="fMt5" type="text" inputmode="numeric" pattern="[0-9]{3,20}" required placeholder="e.g. 52489102" />
+            </div>
+            <div class="field">
+              <label for="fTx">PayPal Email or Transaction ID *</label>
+              <input id="fTx" type="text" required placeholder="e.g. yourpaypal@email.com or TXN12345" />
+            </div>
+            <div class="field">
+              <label for="fScreenshot">Payment Screenshot (Optional, PNG/JPG)</label>
+              <input id="fScreenshot" type="file" accept="image/*" onchange="handleScreenshotFile(this)" />
+              <div id="shotStatus" style="font-size:11px;color:var(--muted);margin-top:3px;"></div>
+            </div>
+            <button class="submit-btn" id="submitOrderBtn" type="submit">Submit Order for Key Delivery</button>
+          </form>
+
+          <div class="alert-box" id="orderResultBox"></div>
+        </div>
+
+        <div class="status-checker">
+          <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:6px;">Quick Order Tracker</div>
+          <div class="row-inline">
+            <input id="trackRefInput" type="text" placeholder="Order Ref (e.g. AUR-8F3K2)" style="flex:1;background:rgba(9,13,22,0.9);border:1px solid rgba(255,255,255,0.14);color:#fff;border-radius:8px;padding:7px 10px;font-size:12.5px;" />
+            <button class="btn-sm" type="button" onclick="checkOrderStatus()">Check</button>
+          </div>
+          <div id="trackResult" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- ==================== CLIENT PORTAL (MY ACCOUNT) VIEW ==================== -->
+  <main class="container hidden" id="accountView">
+    <div class="portal-header">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <h2 style="margin:0;color:var(--gold);font-size:22px;" id="portalUserName">Trader Account</h2>
+          <span class="pill ok">Verified Account</span>
+        </div>
+        <div style="color:var(--muted);font-size:13px;margin-top:4px;" id="portalUserEmail">--</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-gold-sm" onclick="switchView('store')">+ Order EAs / Bundles</button>
+        <button class="btn-sm" onclick="loadAccountOverview()">↻ Refresh</button>
+      </div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-lbl">Active Licenses</div>
+        <div class="stat-val" id="acctStatActive">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Total Orders</div>
+        <div class="stat-val" id="acctStatOrders" style="color:#fff;">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Pending MT5 Switches</div>
+        <div class="stat-val" id="acctStatPendingSw" style="color:var(--blue);">0</div>
+      </div>
+    </div>
+
+    <!-- DOWNLOAD SOFTWARE SECTION (Only unlocked when customer has >= 1 active license) -->
+    <section class="portal-card" id="accountDownloadCard"></section>
+
+    <!-- MY LICENSES SECTION -->
+    <section class="portal-card">
+      <div class="section-title">
+        <span>My Unique License Keys</span>
+        <span style="font-size:11.5px;color:var(--muted);text-transform:none;font-weight:500;">1 Key = 1 MT5 Account (MT5 switch requires Admin approval)</span>
+      </div>
+      <div id="accountLicensesList"></div>
+    </section>
+
+    <!-- MT5 SWITCH HISTORY -->
+    <section class="portal-card hidden" id="accountMt5ReqsCard">
+      <div class="section-title"><span>My MT5 Account Switch Requests</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>License Key</th>
+              <th>Change</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Admin Note</th>
+            </tr>
+          </thead>
+          <tbody id="accountMt5ReqsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- MY ORDERS -->
+    <section class="portal-card">
+      <div class="section-title"><span>My PayPal Orders</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Order Ref</th>
+              <th>Date</th>
+              <th>MT5 #</th>
+              <th>Plan &amp; EAs</th>
+              <th>Amount</th>
+              <th>Status / Key</th>
+            </tr>
+          </thead>
+          <tbody id="accountOrdersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PROFILE SETTINGS -->
+    <section class="portal-card">
+      <div class="section-title"><span>Account Profile &amp; Password</span></div>
+      <form onsubmit="saveProfileChanges(event)" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end;">
+        <div class="field" style="margin:0;">
+          <label for="profFullName">Full Name</label>
+          <input id="profFullName" type="text" required />
+        </div>
+        <div class="field" style="margin:0;">
+          <label for="profCurPwd">Current Password (only if changing)</label>
+          <input id="profCurPwd" type="password" placeholder="Optional" />
+        </div>
+        <div class="field" style="margin:0;">
+          <label for="profNewPwd">New Password (min 8 chars)</label>
+          <input id="profNewPwd" type="password" placeholder="Optional" />
+        </div>
+        <div>
+          <button class="submit-btn" type="submit" style="padding:10px 14px;">Save Profile</button>
+        </div>
+      </form>
+      <div class="alert-box" id="profileAlertBox"></div>
+    </section>
+  </main>
+
+  <!-- ==================== AUTH MODAL (LOGIN / REGISTER / VERIFY / RESET) ==================== -->
+  <div class="backdrop hidden" id="authModal" onclick="closeAuthModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <strong style="color:var(--gold);font-size:17px;" id="authModalTitle">Sign In to Aurum Desk</strong>
+        <button class="btn-sm" onclick="closeAuthModal()">✕</button>
+      </div>
+
+      <div class="auth-tabs" id="authModeTabs">
+        <button class="auth-tab active" id="tabLoginBtn" onclick="setAuthMode('login')">Sign In</button>
+        <button class="auth-tab" id="tabRegisterBtn" onclick="setAuthMode('register')">Create Account</button>
+      </div>
+
+      <!-- LOGIN FORM -->
+      <form id="loginForm" onsubmit="submitCustomerLogin(event)">
+        <div class="field">
+          <label for="loginEmail">Email Address</label>
+          <input id="loginEmail" type="email" required placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="loginPwd">Password</label>
+          <input id="loginPwd" type="password" required placeholder="••••••••" />
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+          <button type="button" class="link-btn" onclick="setAuthMode('forgot')">Forgot Password?</button>
+        </div>
+        <button class="submit-btn" id="loginSubmitBtn" type="submit">Sign In</button>
+      </form>
+
+      <!-- REGISTER FORM -->
+      <form id="registerForm" class="hidden" onsubmit="submitCustomerRegister(event)">
+        <div class="field">
+          <label for="regName">Full Name *</label>
+          <input id="regName" type="text" required placeholder="e.g. John Smith" />
+        </div>
+        <div class="field">
+          <label for="regEmail">Email Address *</label>
+          <input id="regEmail" type="email" required placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="regPwd">Password (min 8 characters) *</label>
+          <input id="regPwd" type="password" minlength="8" required placeholder="Create a strong password" />
+        </div>
+        <div class="field">
+          <label for="regPwd2">Confirm Password *</label>
+          <input id="regPwd2" type="password" minlength="8" required placeholder="Repeat password" />
+        </div>
+        <button class="submit-btn" id="regSubmitBtn" type="submit">Create Account &amp; Send 6-Digit Code</button>
+      </form>
+
+      <!-- VERIFY EMAIL FORM -->
+      <form id="verifyForm" class="hidden" onsubmit="submitVerifyEmail(event)">
+        <p style="font-size:13px;color:#cfd6e0;margin:0 0 12px;line-height:1.5;">
+          We sent a 6-digit verification code to <strong style="color:var(--gold);" id="verifyEmailLabel"></strong>. Enter it below to activate your account (check spam folder if needed).
+        </p>
+        <div class="field">
+          <label for="verifyCodeInput">6-Digit Verification Code</label>
+          <input id="verifyCodeInput" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required placeholder="123456" style="font-family:var(--mono);font-size:20px;letter-spacing:4px;text-align:center;" />
+        </div>
+        <button class="submit-btn" id="verifySubmitBtn" type="submit">Verify Email &amp; Continue</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+          <button type="button" class="link-btn" onclick="resendVerificationCode()">Resend 6-Digit Code</button>
+          <button type="button" class="link-btn" onclick="setAuthMode('login')">Back to Sign In</button>
+        </div>
+      </form>
+
+      <!-- FORGOT PASSWORD FORM -->
+      <form id="forgotForm" class="hidden" onsubmit="submitForgotPassword(event)">
+        <p style="font-size:13px;color:#cfd6e0;margin:0 0 12px;line-height:1.5;">
+          Enter your account email and we will send you a 6-digit password reset code.
+        </p>
+        <div class="field">
+          <label for="forgotEmailInput">Account Email</label>
+          <input id="forgotEmailInput" type="email" required placeholder="you@example.com" />
+        </div>
+        <button class="submit-btn" id="forgotSubmitBtn" type="submit">Send Reset Code</button>
+        <div style="margin-top:12px;text-align:center;">
+          <button type="button" class="link-btn" onclick="setAuthMode('login')">Back to Sign In</button>
+        </div>
+      </form>
+
+      <!-- RESET PASSWORD FORM -->
+      <form id="resetForm" class="hidden" onsubmit="submitResetPassword(event)">
+        <p style="font-size:13px;color:#cfd6e0;margin:0 0 12px;line-height:1.5;">
+          Enter the 6-digit reset code sent to <strong style="color:var(--gold);" id="resetEmailLabel"></strong> and choose a new password.
+        </p>
+        <div class="field">
+          <label for="resetCodeInput">6-Digit Reset Code</label>
+          <input id="resetCodeInput" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required placeholder="123456" style="font-family:var(--mono);font-size:20px;letter-spacing:4px;text-align:center;" />
+        </div>
+        <div class="field">
+          <label for="resetPwdInput">New Password (min 8 characters)</label>
+          <input id="resetPwdInput" type="password" minlength="8" required placeholder="New password" />
+        </div>
+        <div class="field">
+          <label for="resetPwdInput2">Confirm New Password</label>
+          <input id="resetPwdInput2" type="password" minlength="8" required placeholder="Repeat new password" />
+        </div>
+        <button class="submit-btn" id="resetSubmitBtn" type="submit">Reset Password &amp; Sign In</button>
+        <div style="margin-top:12px;text-align:center;">
+          <button type="button" class="link-btn" onclick="setAuthMode('login')">Back to Sign In</button>
+        </div>
+      </form>
+
+      <div class="alert-box" id="authAlertBox"></div>
+    </div>
+  </div>
+
+  <!-- ==================== MT5 SWITCH REQUEST MODAL ==================== -->
+  <div class="backdrop hidden" id="mt5SwitchModal" onclick="closeMt5SwitchModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <strong style="color:var(--gold);font-size:16px;">Request MT5 Account Switch</strong>
+        <button class="btn-sm" onclick="closeMt5SwitchModal()">✕</button>
+      </div>
+      <p style="font-size:12.5px;color:#cfd6e0;margin:0 0 12px;line-height:1.5;">
+        Changing the locked MT5 account requires Admin approval. Once approved, you will receive an email confirmation.
+      </p>
+      <form onsubmit="submitMt5SwitchRequest(event)">
+        <input type="hidden" id="swLicKey" />
+        <div class="field">
+          <label>License Key</label>
+          <input id="swLicDisplay" type="text" readonly class="mono" />
+        </div>
+        <div class="field">
+          <label>Current Locked MT5 Account</label>
+          <input id="swOldMt5" type="text" readonly class="mono" />
+        </div>
+        <div class="field">
+          <label for="swNewMt5">New MT5 Account Number *</label>
+          <input id="swNewMt5" type="text" inputmode="numeric" pattern="[0-9]{3,20}" required placeholder="e.g. 61234567" />
+        </div>
+        <div class="field">
+          <label for="swReason">Reason (e.g. switched broker / funded account)</label>
+          <textarea id="swReason" rows="2" maxlength="350" placeholder="Optional reason for Admin review"></textarea>
+        </div>
+        <button class="submit-btn" id="swSubmitBtn" type="submit">Send Switch Request to Admin</button>
+      </form>
+      <div class="alert-box" id="swAlertBox"></div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toastBox"></div>
+
+  <script>
+    let catalog = { bots: [], bundles: [], paypal_me_url: 'https://paypal.me/AurumDesk', contact_email: 'eliodemaj07@gmail.com' };
+    let currentPlan = 'lifetime';
+    let selectedBots = new Set(['zenith']);
+    let selectedBundleId = '';
+    let compressedScreenshot = '';
+    let currentUser = null;
+    let accountOverview = null;
+    let pendingAuthEmail = '';
+    let currentView = (window.location.pathname === '/account' || window.location.pathname === '/account/') ? 'account' : 'store';
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function fmtDate(ts) {
+      if (!ts) return '--';
+      return new Date(Number(ts) * 1000).toISOString().slice(0, 16).replace('T', ' ');
+    }
+
+    function showToast(msg) {
+      const el = document.getElementById('toastBox');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.add('hidden'), 3500);
+    }
+
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt).then(() => showToast('Copied: ' + txt));
+    }
+
+    async function initApp() {
+      await Promise.all([loadCatalog(), refreshSession()]);
+      if (currentView === 'account') {
+        if (currentUser) {
+          await openAccountView();
+        } else {
+          switchView('store');
+          openAuthModal('login');
+        }
+      }
+    }
+
+    async function loadCatalog() {
+      const res = await fetch('/api/catalog');
+      catalog = await res.json();
+      const sup = document.getElementById('supportEmailLink');
+      if (sup && catalog.contact_email) {
+        sup.href = 'mailto:' + catalog.contact_email;
+        sup.textContent = 'Support: ' + catalog.contact_email;
+      }
+      const notice = document.getElementById('storeNoticeBanner');
+      if (notice && catalog.store_notice) {
+        notice.textContent = catalog.store_notice;
+        notice.classList.add('show');
+      }
+      renderStore();
+    }
+
+    async function refreshSession() {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        currentUser = (data.ok && data.authenticated) ? data.user : null;
+      } catch (e) {
+        currentUser = null;
+      }
+      renderAuthUI();
+    }
+
+    function renderAuthUI() {
+      const loggedIn = Boolean(currentUser);
+      document.getElementById('guestAuthBtns').classList.toggle('hidden', loggedIn);
+      document.getElementById('userAuthBtns').classList.toggle('hidden', !loggedIn);
+      document.getElementById('checkoutAuthGate').classList.toggle('hidden', loggedIn);
+      document.getElementById('checkoutUnlocked').classList.toggle('hidden', !loggedIn);
+
+      if (loggedIn) {
+        document.getElementById('topbarUserBadge').textContent = currentUser.full_name;
+        const nameEl = document.getElementById('fName');
+        const emailEl = document.getElementById('fEmail');
+        if (nameEl && !nameEl.value.trim()) nameEl.value = currentUser.full_name || '';
+        if (emailEl) emailEl.value = currentUser.email || '';
+      }
+    }
+
+    function switchView(view) {
+      currentView = view;
+      document.getElementById('storeView').classList.toggle('hidden', view !== 'store');
+      document.getElementById('accountView').classList.toggle('hidden', view !== 'account');
+      document.getElementById('navStoreBtn').classList.toggle('active', view === 'store');
+      document.getElementById('navAccountBtn').classList.toggle('active', view === 'account');
+    }
+
+    function openAccountOrLogin() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      openAccountView();
+    }
+
+    async function openAccountView() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      switchView('account');
+      await loadAccountOverview();
+    }
+
+    async function loadAccountOverview() {
+      if (!currentUser) return;
+      const res = await fetch('/api/account/overview');
+      if (res.status === 401) {
+        currentUser = null;
+        renderAuthUI();
+        switchView('store');
+        openAuthModal('login');
+        return;
+      }
+      const data = await res.json();
+      if (!data.ok) return;
+      accountOverview = data;
+      currentUser = data.user || currentUser;
+      renderAuthUI();
+      renderAccountPortal();
+    }
+
+    function renderAccountPortal() {
+      if (!accountOverview) return;
+      const u = accountOverview.user || currentUser || {};
+      const lics = accountOverview.licenses || [];
+      const ords = accountOverview.orders || [];
+      const sws = accountOverview.mt5_requests || [];
+
+      document.getElementById('portalUserName').textContent = u.full_name || 'Customer';
+      document.getElementById('portalUserEmail').textContent = u.email || '';
+      document.getElementById('profFullName').value = u.full_name || '';
+
+      const activeLics = lics.filter(l => l.status === 'active' && !l.is_expired);
+      const pendingSws = sws.filter(r => r.status === 'pending');
+
+      document.getElementById('acctStatActive').textContent = activeLics.length;
+      document.getElementById('acctStatOrders').textContent = ords.length;
+      document.getElementById('acctStatPendingSw').textContent = pendingSws.length;
+
+      // Download card (only shown when customer has >= 1 active license)
+      const dlCard = document.getElementById('accountDownloadCard');
+      if (accountOverview.has_active_license && accountOverview.download_url) {
+        dlCard.className = 'portal-card download-unlocked';
+        dlCard.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:15px;font-weight:800;color:var(--gold);margin-bottom:4px;">Aurum Desk Windows Terminal — Download Ready</div>
+              <div style="font-size:13px;color:#cfd6e0;line-height:1.5;">
+                1. Download &amp; extract the ZIP archive on Windows. &nbsp; 2. Open MetaTrader 5 logged into your bound MT5 account.<br/>
+                3. Turn ON <strong>Algo Trading</strong> in MT5, launch <strong>Aurum_Desk.vbs</strong>, and paste your Unique Key below.
+              </div>
+            </div>
+            <a href="${escapeHtml(accountOverview.download_url)}" target="_blank" rel="noopener" class="btn-gold-sm" style="padding:11px 18px;font-size:13.5px;text-decoration:none;">
+              ⬇ Download Aurum Desk (Windows)
+            </a>
+          </div>
+        `;
+      } else {
+        dlCard.className = 'portal-card';
+        dlCard.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:800;color:#fff;margin-bottom:3px;">Aurum Desk Software Download</div>
+              <div style="font-size:12.5px;color:var(--muted);">
+                Your Windows download link unlocks automatically here once you have at least <strong>1 Active License</strong>.
+              </div>
+            </div>
+            <span class="pill warn">Locked until License Active</span>
+          </div>
+        `;
+      }
+
+      // Pending MT5 switch lookup by key
+      const pendingByKey = {};
+      sws.forEach(r => {
+        if (r.status === 'pending') pendingByKey[r.license_key] = r;
+      });
+
+      // Render Licenses
+      const licBox = document.getElementById('accountLicensesList');
+      if (!lics.length) {
+        licBox.innerHTML = '<div style="color:var(--muted);padding:12px 0;">You do not have any license keys yet. Select your EAs in the Store to get started.</div>';
+      } else {
+        licBox.innerHTML = `<div class="lic-grid">` + lics.map((l, idx) => {
+          const isOk = l.status === 'active' && !l.is_expired;
+          const stText = l.is_expired ? 'EXPIRED' : l.status.toUpperCase();
+          const stCls = isOk ? 'ok' : 'danger';
+          const expInfo = l.plan_type === 'monthly'
+            ? (l.is_expired ? '30-Day Plan Expired' : `30-Day Plan (${l.days_left} days left • expires ${fmtDate(l.expires_at).slice(0,10)})`)
+            : 'Lifetime License (Never Expires)';
+          const pendingReq = pendingByKey[l.license_key];
+          const easHtml = (l.bot_names || []).map(b => `<span class="ea-chip">${escapeHtml(b)}</span>`).join('');
+
+          return `
+            <div class="lic-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span class="mono" style="font-size:16px;font-weight:800;color:var(--gold);">${escapeHtml(l.license_key)}</span>
+                <span class="pill ${stCls}">${escapeHtml(stText)}</span>
+              </div>
+              <div style="font-size:12.5px;color:#cfd6e0;">
+                <strong>Locked MT5 Account:</strong> <span class="mono" style="color:#fff;">#${escapeHtml(l.bound_mt5_login)}</span>
+              </div>
+              <div style="font-size:12px;color:var(--muted);">${escapeHtml(expInfo)}</div>
+              <div>${easHtml}</div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+                <button class="btn-sm" onclick="copyTextByIndex(${idx})">📋 Copy Key</button>
+                ${isOk && !pendingReq ? `<button class="btn-sm" onclick="openMt5SwitchModal(${idx})">🔄 Request MT5 Switch</button>` : ''}
+                ${pendingReq ? `<span class="pill warn">Switch Pending: #${escapeHtml(pendingReq.old_mt5_login)} → #${escapeHtml(pendingReq.new_mt5_login)}</span>` : ''}
+              </div>
+            </div>
+          `;
+        }).join('') + `</div>`;
+      }
+
+      // Render MT5 Requests History
+      const swCard = document.getElementById('accountMt5ReqsCard');
+      const swBody = document.getElementById('accountMt5ReqsBody');
+      if (!sws.length) {
+        swCard.classList.add('hidden');
+      } else {
+        swCard.classList.remove('hidden');
+        swBody.innerHTML = sws.map(r => {
+          const cls = r.status === 'approved' ? 'ok' : (r.status === 'rejected' ? 'danger' : 'warn');
+          return `
+            <tr>
+              <td class="mono" style="font-size:11.5px;">${fmtDate(r.created_at)}</td>
+              <td class="mono" style="color:var(--gold);">${escapeHtml(r.license_key)}</td>
+              <td class="mono">#${escapeHtml(r.old_mt5_login)} → <strong>#${escapeHtml(r.new_mt5_login)}</strong></td>
+              <td>${escapeHtml(r.reason || '--')}</td>
+              <td><span class="pill ${cls}">${escapeHtml(r.status.toUpperCase())}</span></td>
+              <td style="color:var(--muted);">${escapeHtml(r.admin_note || '--')}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      // Render Orders
+      const ordBody = document.getElementById('accountOrdersBody');
+      if (!ords.length) {
+        ordBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px;">No orders placed yet.</td></tr>';
+      } else {
+        ordBody.innerHTML = ords.map(o => {
+          const cls = o.status === 'approved' ? 'ok' : (o.status === 'rejected' ? 'danger' : 'warn');
+          return `
+            <tr>
+              <td class="mono"><strong>${escapeHtml(o.order_ref)}</strong></td>
+              <td class="mono" style="font-size:11.5px;">${fmtDate(o.created_at)}</td>
+              <td class="mono">#${escapeHtml(o.mt5_login)}</td>
+              <td><strong>${o.plan_type === 'monthly' ? '30 Days' : 'Lifetime'}</strong><div style="font-size:11px;color:var(--muted);">${escapeHtml((o.bot_names || []).join(', '))}</div></td>
+              <td class="mono" style="color:var(--gold);font-weight:700;">€${o.amount_eur}</td>
+              <td>
+                <span class="pill ${cls}">${escapeHtml(o.status.toUpperCase())}</span>
+                ${o.license_key ? `<div class="mono" style="font-size:11.5px;color:var(--gold);margin-top:4px;">${escapeHtml(o.license_key)}</div>` : ''}
+                ${o.status === 'rejected' && o.admin_note ? `<div style="font-size:11px;color:#ffb3ad;margin-top:3px;">${escapeHtml(o.admin_note)}</div>` : ''}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    function copyTextByIndex(idx) {
+      const l = (accountOverview && accountOverview.licenses || [])[idx];
+      if (l) copyText(l.license_key);
+    }
+
+    // ================= AUTH MODAL LOGIC =================
+    function openAuthModal(mode = 'login') {
+      setAuthMode(mode);
+      document.getElementById('authModal').classList.remove('hidden');
+    }
+
+    function closeAuthModal() {
+      document.getElementById('authModal').classList.add('hidden');
+    }
+
+    function clearAuthAlert() {
+      const box = document.getElementById('authAlertBox');
+      box.className = 'alert-box';
+      box.textContent = '';
+    }
+
+    function showAuthAlert(msg, isOk = false) {
+      const box = document.getElementById('authAlertBox');
+      box.textContent = msg;
+      box.className = 'alert-box ' + (isOk ? 'ok' : 'err');
+    }
+
+    function setAuthMode(mode) {
+      clearAuthAlert();
+      const showTabs = (mode === 'login' || mode === 'register');
+      document.getElementById('authModeTabs').classList.toggle('hidden', !showTabs);
+      document.getElementById('tabLoginBtn').classList.toggle('active', mode === 'login');
+      document.getElementById('tabRegisterBtn').classList.toggle('active', mode === 'register');
+
+      ['loginForm', 'registerForm', 'verifyForm', 'forgotForm', 'resetForm'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+
+      const titles = {
+        login: 'Sign In to Aurum Desk',
+        register: 'Create Aurum Desk Account',
+        verify: 'Verify Your Email Address',
+        forgot: 'Reset Password',
+        reset: 'Enter Reset Code & New Password',
+      };
+      document.getElementById('authModalTitle').textContent = titles[mode] || 'Aurum Desk Account';
+
+      if (mode === 'login') document.getElementById('loginForm').classList.remove('hidden');
+      if (mode === 'register') document.getElementById('registerForm').classList.remove('hidden');
+      if (mode === 'verify') {
+        document.getElementById('verifyEmailLabel').textContent = pendingAuthEmail;
+        document.getElementById('verifyCodeInput').value = '';
+        document.getElementById('verifyForm').classList.remove('hidden');
+      }
+      if (mode === 'forgot') document.getElementById('forgotForm').classList.remove('hidden');
+      if (mode === 'reset') {
+        document.getElementById('resetEmailLabel').textContent = pendingAuthEmail;
+        document.getElementById('resetCodeInput').value = '';
+        document.getElementById('resetForm').classList.remove('hidden');
+      }
+    }
+
+    async function submitCustomerLogin(ev) {
+      ev.preventDefault();
+      clearAuthAlert();
+      const btn = document.getElementById('loginSubmitBtn');
+      btn.disabled = true;
+      try {
+        const email = document.getElementById('loginEmail').value.trim();
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            password: document.getElementById('loginPwd').value,
+          }),
+        });
+        const data = await res.json();
+        if (data.verification_required) {
+          pendingAuthEmail = data.email || email.toLowerCase();
+          setAuthMode('verify');
+          showAuthAlert(data.error || 'Please verify your email first.', false);
+          return;
+        }
+        if (!res.ok || !data.ok) {
+          showAuthAlert(data.error || 'Sign in failed.', false);
+          return;
+        }
+        currentUser = data.user;
+        renderAuthUI();
+        closeAuthModal();
+        showToast('Signed in as ' + currentUser.full_name);
+        if (currentView === 'account') await loadAccountOverview();
+      } catch (e) {
+        showAuthAlert('Network error.', false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function submitCustomerRegister(ev) {
+      ev.preventDefault();
+      clearAuthAlert();
+      const p1 = document.getElementById('regPwd').value;
+      const p2 = document.getElementById('regPwd2').value;
+      if (p1 !== p2) {
+        showAuthAlert('Passwords do not match.', false);
+        return;
+      }
+      const btn = document.getElementById('regSubmitBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            full_name: document.getElementById('regName').value.trim(),
+            email: document.getElementById('regEmail').value.trim(),
+            password: p1,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          showAuthAlert(data.error || 'Could not create account.', false);
+          return;
+        }
+        pendingAuthEmail = data.email;
+        setAuthMode('verify');
+        if (data.email_sent) {
+          showAuthAlert('Verification code sent! Please enter the 6-digit code from your email.', true);
+        } else {
+          showAuthAlert('Account created, but email failed to send: ' + (data.email_error || 'Check email settings'), false);
+        }
+      } catch (e) {
+        showAuthAlert('Network error.', false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function resendVerificationCode() {
+      clearAuthAlert();
+      if (!pendingAuthEmail) return;
+      const res = await fetch('/api/auth/resend-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pendingAuthEmail }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        showAuthAlert('A fresh 6-digit code has been emailed to ' + pendingAuthEmail, true);
+      } else {
+        showAuthAlert(data.error || 'Could not resend code.', false);
+      }
+    }
+
+    async function submitVerifyEmail(ev) {
+      ev.preventDefault();
+      clearAuthAlert();
+      const btn = document.getElementById('verifySubmitBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/verify-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: pendingAuthEmail,
+            code: document.getElementById('verifyCodeInput').value.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          showAuthAlert(data.error || 'Invalid verification code.', false);
+          return;
+        }
+        currentUser = data.user;
+        renderAuthUI();
+        closeAuthModal();
+        showToast('Account verified! You can now order or view My Account.');
+      } catch (e) {
+        showAuthAlert('Network error.', false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function submitForgotPassword(ev) {
+      ev.preventDefault();
+      clearAuthAlert();
+      const email = document.getElementById('forgotEmailInput').value.trim().toLowerCase();
+      const btn = document.getElementById('forgotSubmitBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/forgot-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        pendingAuthEmail = email;
+        setAuthMode('reset');
+        showAuthAlert(data.message || 'Check your email for the 6-digit reset code.', true);
+      } catch (e) {
+        showAuthAlert('Network error.', false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function submitResetPassword(ev) {
+      ev.preventDefault();
+      clearAuthAlert();
+      const p1 = document.getElementById('resetPwdInput').value;
+      const p2 = document.getElementById('resetPwdInput2').value;
+      if (p1 !== p2) {
+        showAuthAlert('Passwords do not match.', false);
+        return;
+      }
+      const btn = document.getElementById('resetSubmitBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: pendingAuthEmail,
+            code: document.getElementById('resetCodeInput').value.trim(),
+            new_password: p1,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          showAuthAlert(data.error || 'Could not reset password.', false);
+          return;
+        }
+        currentUser = data.user;
+        renderAuthUI();
+        closeAuthModal();
+        showToast('Password updated & signed in!');
+      } catch (e) {
+        showAuthAlert('Network error.', false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function logoutCustomer() {
+      await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      currentUser = null;
+      accountOverview = null;
+      renderAuthUI();
+      if (currentView === 'account') switchView('store');
+      showToast('Signed out.');
+    }
+
+    async function saveProfileChanges(ev) {
+      ev.preventDefault();
+      const box = document.getElementById('profileAlertBox');
+      box.className = 'alert-box';
+      const curPwd = document.getElementById('profCurPwd').value;
+      const newPwd = document.getElementById('profNewPwd').value;
+      const res = await fetch('/api/account/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: document.getElementById('profFullName').value.trim(),
+          current_password: curPwd,
+          new_password: newPwd,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        currentUser = data.user;
+        renderAuthUI();
+        document.getElementById('profCurPwd').value = '';
+        document.getElementById('profNewPwd').value = '';
+        box.textContent = 'Profile saved successfully.';
+        box.className = 'alert-box ok';
+        await loadAccountOverview();
+      } else {
+        box.textContent = data.error || 'Failed to update profile.';
+        box.className = 'alert-box err';
+      }
+    }
+
+    // ================= MT5 SWITCH MODAL =================
+    function openMt5SwitchModal(idx) {
+      const lic = (accountOverview && accountOverview.licenses || [])[idx];
+      if (!lic) return;
+      document.getElementById('swLicKey').value = lic.license_key;
+      document.getElementById('swLicDisplay').value = lic.license_key;
+      document.getElementById('swOldMt5').value = '#' + lic.bound_mt5_login;
+      document.getElementById('swNewMt5').value = '';
+      document.getElementById('swReason').value = '';
+      const box = document.getElementById('swAlertBox');
+      box.className = 'alert-box';
+      document.getElementById('mt5SwitchModal').classList.remove('hidden');
+    }
+
+    function closeMt5SwitchModal() {
+      document.getElementById('mt5SwitchModal').classList.add('hidden');
+    }
+
+    async function submitMt5SwitchRequest(ev) {
+      ev.preventDefault();
+      const box = document.getElementById('swAlertBox');
+      box.className = 'alert-box';
+      const btn = document.getElementById('swSubmitBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/account/mt5-switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            license_key: document.getElementById('swLicKey').value,
+            new_mt5_login: document.getElementById('swNewMt5').value.trim(),
+            reason: document.getElementById('swReason').value.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          box.textContent = data.error || 'Could not submit request.';
+          box.className = 'alert-box err';
+          return;
+        }
+        closeMt5SwitchModal();
+        showToast('MT5 switch request submitted to Admin!');
+        await loadAccountOverview();
+      } catch (e) {
+        box.textContent = 'Network error.';
+        box.className = 'alert-box err';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ================= STORE CATALOG & CHECKOUT =================
+    function setPlan(plan) {
+      currentPlan = plan;
+      document.getElementById('btnPlanLifetime').classList.toggle('active', plan === 'lifetime');
+      document.getElementById('btnPlanMonthly').classList.toggle('active', plan === 'monthly');
+      document.getElementById('planPill').textContent = plan === 'monthly' ? '30 DAYS' : 'LIFETIME';
+      renderStore();
+    }
+
+    function selectBundle(bid) {
+      const b = (catalog.bundles || []).find(x => x.id === bid);
+      if (!b) return;
+      selectedBundleId = bid;
+      selectedBots = new Set(b.bot_ids);
+      renderStore();
+    }
+
+    function toggleBot(bid) {
+      if (selectedBots.has(bid)) selectedBots.delete(bid);
+      else selectedBots.add(bid);
+      selectedBundleId = '';
+      for (const b of (catalog.bundles || [])) {
+        if (b.bot_ids.length === selectedBots.size && b.bot_ids.every(x => selectedBots.has(x))) {
+          selectedBundleId = b.id;
+          break;
+        }
+      }
+      renderStore();
+    }
+
+    function clearSelection() {
+      selectedBots.clear();
+      selectedBundleId = '';
+      renderStore();
+    }
+
+    function computeTotalEur() {
+      const chosen = Array.from(selectedBots);
+      if (!chosen.length) return 0;
+      for (const b of (catalog.bundles || [])) {
+        if (b.bot_ids.length === chosen.length && b.bot_ids.every(x => selectedBots.has(x))) {
+          return currentPlan === 'monthly' ? b.monthly_eur : b.lifetime_eur;
+        }
+      }
+      let sum = 0;
+      for (const bid of chosen) {
+        const bot = (catalog.bots || []).find(x => x.id === bid);
+        if (bot) sum += currentPlan === 'monthly' ? bot.monthly_eur : bot.lifetime_eur;
+      }
+      return sum;
+    }
+
+    function renderStore() {
+      const bGrid = document.getElementById('bundlesGrid');
+      bGrid.innerHTML = (catalog.bundles || []).map(b => {
+        const price = currentPlan === 'monthly' ? b.monthly_eur : b.lifetime_eur;
+        const indivSum = b.bot_ids.reduce((acc, id) => {
+          const item = catalog.bots.find(x => x.id === id);
+          return acc + (item ? (currentPlan === 'monthly' ? item.monthly_eur : item.lifetime_eur) : 0);
+        }, 0);
+        const save = Math.max(0, indivSum - price);
+        const isSel = selectedBundleId === b.id;
+        return `
+          <div class="bundle-card ${isSel ? 'selected' : ''}" onclick="selectBundle('${b.id}')">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                <strong style="color:#fff;font-size:14.5px;">${escapeHtml(b.name)}</strong>
+                ${save > 0 ? `<span class="save-tag">Save €${save}</span>` : ''}
+              </div>
+              <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">${escapeHtml(b.tagline)}</div>
+            </div>
+            <div>
+              <div class="bundle-price">€${price} <span style="font-size:11.5px;color:var(--muted);font-weight:500;">${currentPlan === 'monthly' ? '/ 30d' : 'lifetime'}</span></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const eGrid = document.getElementById('easGrid');
+      eGrid.innerHTML = (catalog.bots || []).map(ea => {
+        const price = currentPlan === 'monthly' ? ea.monthly_eur : ea.lifetime_eur;
+        const isSel = selectedBots.has(ea.id);
+        return `
+          <div class="ea-card ${isSel ? 'selected' : ''}" onclick="toggleBot('${ea.id}')">
+            <div class="ea-head">
+              <div class="ea-name">
+                <input type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleBot('${ea.id}')" style="accent-color:#f5d57a;width:16px;height:16px;cursor:pointer;" />
+                <span>${escapeHtml(ea.name)}</span>
+              </div>
+              <span class="ea-price">€${price}</span>
+            </div>
+            <div class="ea-tf">${escapeHtml(ea.timeframe)} • ${currentPlan === 'monthly' ? '30 Days' : 'Lifetime'}</div>
+            <div class="ea-desc">${escapeHtml(ea.description)}</div>
+          </div>
+        `;
+      }).join('');
+
+      const total = computeTotalEur();
+      const names = (catalog.bots || []).filter(x => selectedBots.has(x.id)).map(x => x.name);
+      document.getElementById('selectedCount').textContent = names.length;
+      document.getElementById('selectedNames').textContent = names.length ? names.join(', ') : 'None selected';
+      document.getElementById('totalAmountDisplay').textContent = `€${total}`;
+
+      const ppBtn = document.getElementById('paypalPayBtn');
+      if (total > 0) {
+        const base = (catalog.paypal_me_url || 'https://paypal.me/AurumDesk').replace(/\/+$/, '');
+        ppBtn.href = `${base}/${total}EUR`;
+        ppBtn.textContent = `Pay €${total} via PayPal.me/AurumDesk`;
+        ppBtn.classList.remove('disabled');
+      } else {
+        ppBtn.href = '#';
+        ppBtn.textContent = 'Select at least 1 EA';
+        ppBtn.classList.add('disabled');
+      }
+    }
+
+    function handleScreenshotFile(input) {
+      const status = document.getElementById('shotStatus');
+      const file = input.files && input.files[0];
+      if (!file) {
+        compressedScreenshot = '';
+        status.textContent = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+          const maxW = 1100;
+          const scale = Math.min(1, maxW / img.width);
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          compressedScreenshot = canvas.toDataURL('image/jpeg', 0.8);
+          status.textContent = `Screenshot attached (${Math.round(compressedScreenshot.length / 1024)} KB)`;
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function submitOrder(ev) {
+      ev.preventDefault();
+      const box = document.getElementById('orderResultBox');
+      box.className = 'alert-box';
+      box.textContent = '';
+
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      if (selectedBots.size === 0) {
+        box.textContent = 'Please select at least one Expert Advisor.';
+        box.className = 'alert-box err';
+        return;
+      }
+
+      const btn = document.getElementById('submitOrderBtn');
+      btn.disabled = true;
+      btn.textContent = 'Submitting Order...';
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customer_name: document.getElementById('fName').value.trim(),
+            mt5_login: document.getElementById('fMt5').value.trim(),
+            plan_type: currentPlan,
+            bundle_id: selectedBundleId,
+            bot_ids: Array.from(selectedBots),
+            paypal_tx: document.getElementById('fTx').value.trim(),
+            screenshot_data: compressedScreenshot,
+          }),
+        });
+        const data = await res.json();
+        if (res.status === 401 && data.auth_required) {
+          currentUser = null;
+          renderAuthUI();
+          openAuthModal('login');
+          return;
+        }
+        if (!res.ok || !data.ok) {
+          box.textContent = data.error || 'Could not submit order.';
+          box.className = 'alert-box err';
+          return;
+        }
+        const o = data.order;
+        document.getElementById('trackRefInput').value = o.order_ref;
+        box.innerHTML = `<strong>Order Submitted: ${escapeHtml(o.order_ref)}</strong><br/>Status: <strong>PENDING ADMIN APPROVAL</strong><br/>Once verified, your Unique Key for MT5 #${escapeHtml(o.mt5_login)} will appear in <strong>My Account</strong> and be emailed to <strong>${escapeHtml(o.customer_email)}</strong>.<div style="margin-top:8px;"><button type="button" class="btn-gold-sm" onclick="openAccountView()">Go to My Account →</button></div>`;
+        box.className = 'alert-box ok';
+        document.getElementById('fMt5').value = '';
+        document.getElementById('fTx').value = '';
+        document.getElementById('fScreenshot').value = '';
+        compressedScreenshot = '';
+        document.getElementById('shotStatus').textContent = '';
+      } catch (e) {
+        box.textContent = 'Network error while submitting order.';
+        box.className = 'alert-box err';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit Order for Key Delivery';
+      }
+    }
+
+    async function checkOrderStatus() {
+      const ref = document.getElementById('trackRefInput').value.trim().toUpperCase();
+      const out = document.getElementById('trackResult');
+      if (!ref) {
+        out.textContent = 'Enter an Order Ref first.';
+        return;
+      }
+      const res = await fetch('/api/order-status/' + encodeURIComponent(ref));
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        out.textContent = data.error || 'Order not found.';
+        return;
+      }
+      const o = data.order;
+      if (o.status === 'approved') {
+        out.innerHTML = `<span style="color:#7ee787;font-weight:700;">APPROVED</span> • Your Unique Key has been emailed to ${escapeHtml(o.customer_email)} and saved in My Account (MT5 #${escapeHtml(o.mt5_login)}).`;
+      } else if (o.status === 'rejected') {
+        out.innerHTML = `<span style="color:#ffb3ad;font-weight:700;">REJECTED</span> • ${escapeHtml(o.admin_note || 'Payment not verified')}`;
+      } else {
+        out.innerHTML = `<span style="color:#f5d57a;font-weight:700;">PENDING APPROVAL</span> • €${o.amount_eur} for MT5 #${escapeHtml(o.mt5_login)}.`;
+      }
+    }
+
+    initApp();
+  </script>
+</body>
+</html>
