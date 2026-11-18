@@ -65,15 +65,14 @@
     .pill.warn { border-color: rgba(210,153,34,0.55); color: #f3cc73; background: rgba(210,153,34,0.14); }
     .pill.danger { border-color: rgba(248,81,73,0.55); color: #ffb3ad; background: rgba(248,81,73,0.16); }
 
-    .container { max-width: 1460px; margin: 0 auto; padding: 16px 18px 40px; }
+    .container { max-width: 1480px; margin: 0 auto; padding: 16px 18px 40px; }
 
     .stats-row {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
       gap: 10px;
       margin-bottom: 14px;
     }
-    @media (max-width: 900px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
     .stat-box {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -81,7 +80,7 @@
       padding: 11px 14px;
     }
     .stat-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); }
-    .stat-val { font-size: 23px; font-weight: 800; font-family: var(--mono); margin-top: 4px; color: #fff; }
+    .stat-val { font-size: 22px; font-weight: 800; font-family: var(--mono); margin-top: 4px; color: #fff; }
 
     .admin-grid {
       display: grid;
@@ -109,7 +108,6 @@
     }
     .panel-title { font-weight: 800; font-size: 13.5px; color: var(--gold); display: flex; align-items: center; gap: 7px; }
 
-    /* Live Notifications Feed (Replaces Telegram) */
     .notif-feed {
       max-height: 760px;
       overflow-y: auto;
@@ -189,7 +187,6 @@
     }
     .input:focus { outline: none; border-color: var(--gold); }
 
-    /* Login & Modals */
     .backdrop {
       position: fixed;
       inset: 0;
@@ -261,8 +258,12 @@
   <main class="container" id="adminMain">
     <div class="stats-row">
       <div class="stat-box">
-        <div class="stat-lbl">Pending PayPal Orders</div>
+        <div class="stat-lbl">Pending Orders</div>
         <div class="stat-val" style="color:var(--gold);" id="stPending">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-lbl">MT5 Switch Requests</div>
+        <div class="stat-val" style="color:var(--amber);" id="stMt5Reqs">0</div>
       </div>
       <div class="stat-box">
         <div class="stat-lbl">Active Unique Keys</div>
@@ -273,13 +274,16 @@
         <div class="stat-val" style="color:#7ee787;" id="stRevenue">€0</div>
       </div>
       <div class="stat-box">
+        <div class="stat-lbl">Verified Customers</div>
+        <div class="stat-val" style="color:var(--blue);" id="stUsers">0</div>
+      </div>
+      <div class="stat-box">
         <div class="stat-lbl">Unread Live Alerts</div>
-        <div class="stat-val" style="color:var(--blue);" id="stUnread">0</div>
+        <div class="stat-val" style="color:#fff;" id="stUnread">0</div>
       </div>
     </div>
 
     <div class="admin-grid">
-      <!-- LEFT COLUMN: Live Notifications Feed (Replaces Telegram!) -->
       <section class="panel">
         <div class="panel-head">
           <div class="panel-title">
@@ -291,11 +295,12 @@
         <div class="notif-feed" id="notifFeed"></div>
       </section>
 
-      <!-- RIGHT COLUMN: Orders / Licenses / Emails & Settings -->
       <section class="panel">
         <div class="tabs">
           <button class="tab-btn active" id="tabBtnOrders" onclick="switchAdminTab('orders')">Orders Queue</button>
+          <button class="tab-btn" id="tabBtnMt5Reqs" onclick="switchAdminTab('mt5reqs')">MT5 Switch Requests <span id="mt5TabBadge"></span></button>
           <button class="tab-btn" id="tabBtnLicenses" onclick="switchAdminTab('licenses')">Unique Keys &amp; MT5 Locks</button>
+          <button class="tab-btn" id="tabBtnUsers" onclick="switchAdminTab('users')">Customers</button>
           <button class="tab-btn" id="tabBtnEmails" onclick="switchAdminTab('emails')">Email Logs &amp; Settings</button>
         </div>
 
@@ -328,6 +333,35 @@
           </div>
         </div>
 
+        <!-- MT5 SWITCH REQUESTS TAB -->
+        <div id="tabMt5Reqs" class="hidden" style="padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+            <div style="display:flex;gap:6px;">
+              <button class="btn" onclick="setMt5Filter('pending')">Pending</button>
+              <button class="btn" onclick="setMt5Filter('all')">All Requests</button>
+              <button class="btn" onclick="setMt5Filter('approved')">Approved</button>
+              <button class="btn" onclick="setMt5Filter('rejected')">Rejected</button>
+            </div>
+            <span style="font-size:12px;color:var(--muted);">Approving rebinds the Unique Key to the new MT5 # and notifies the customer by email.</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Customer</th>
+                  <th>License Key</th>
+                  <th>MT5 Change</th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="mt5ReqsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- LICENSES TAB -->
         <div id="tabLicenses" class="hidden" style="padding:12px;">
           <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
@@ -352,16 +386,39 @@
           </div>
         </div>
 
+        <!-- CUSTOMERS TAB -->
+        <div id="tabUsers" class="hidden" style="padding:12px;">
+          <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
+            <input class="input" id="userSearchInput" style="max-width:340px;" placeholder="Search customer name or email..." oninput="renderUsers()" />
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Email / Verified</th>
+                  <th>Licenses (Active / Total)</th>
+                  <th>Orders / Total Spent</th>
+                  <th>Joined / Last Login</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="usersBody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- EMAILS & SETTINGS TAB -->
         <div id="tabEmails" class="hidden" style="padding:14px;">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
             <div>
-              <label style="font-size:12px;color:var(--muted);">Aurum Desk Download URL (Sent in Customer Emails)</label>
+              <label style="font-size:12px;color:var(--muted);">Aurum Desk Download URL (Sent in Customer Emails &amp; Active Client Portal)</label>
               <input class="input" id="setDownloadUrl" placeholder="https://drive.google.com/..." />
             </div>
             <div>
               <label style="font-size:12px;color:var(--muted);">Admin Support / Copy Email</label>
-              <input class="input" id="setAdminEmail" placeholder="demajelio132@gmail.com" />
+              <input class="input" id="setAdminEmail" placeholder="eliodemaj07@gmail.com" />
             </div>
             <div>
               <label style="font-size:12px;color:var(--muted);">Public Store Notice Banner (Optional)</label>
@@ -370,7 +427,7 @@
             <div style="display:flex;align-items:flex-end;gap:8px;">
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;">
                 <input type="checkbox" id="setSendCopy" style="accent-color:#f5d57a;width:16px;height:16px;" />
-                Send copy of every approved Key email to Admin Email
+                Send copy of orders, MT5 switch requests &amp; keys to Admin Email
               </label>
             </div>
           </div>
@@ -509,8 +566,9 @@
   <div class="toast hidden" id="toastBox"></div>
 
   <script>
-    let state = { bots: [], orders: [], licenses: [], notifications: [], unread_count: 0, email_logs: [], settings: {}, metrics: {} };
+    let state = { bots: [], orders: [], licenses: [], mt5_requests: [], users: [], notifications: [], unread_count: 0, email_logs: [], settings: {}, metrics: {} };
     let orderFilter = 'pending';
+    let mt5Filter = 'pending';
     let lastNotifId = 0;
     let soundEnabled = localStorage.getItem('aurum_admin_sound') !== 'off';
 
@@ -557,17 +615,21 @@
     document.getElementById('soundToggleBtn').textContent = soundEnabled ? '🔔 Alert Sound: ON' : '🔕 Alert Sound: OFF';
 
     function switchAdminTab(tab) {
-      ['Orders', 'Licenses', 'Emails'].forEach(t => {
-        const low = t.toLowerCase();
-        document.getElementById('tab' + t).classList.toggle('hidden', low !== tab);
-        document.getElementById('tabBtn' + t).classList.toggle('active', low === tab);
+      const map = {
+        orders: ['tabOrders', 'tabBtnOrders'],
+        mt5reqs: ['tabMt5Reqs', 'tabBtnMt5Reqs'],
+        licenses: ['tabLicenses', 'tabBtnLicenses'],
+        users: ['tabUsers', 'tabBtnUsers'],
+        emails: ['tabEmails', 'tabBtnEmails'],
+      };
+      Object.entries(map).forEach(([k, [panelId, btnId]]) => {
+        document.getElementById(panelId).classList.toggle('hidden', k !== tab);
+        document.getElementById(btnId).classList.toggle('active', k === tab);
       });
     }
 
-    function setOrderFilter(f) {
-      orderFilter = f;
-      renderOrders();
-    }
+    function setOrderFilter(f) { orderFilter = f; renderOrders(); }
+    function setMt5Filter(f) { mt5Filter = f; renderMt5Requests(); }
 
     async function refreshAll() {
       try {
@@ -590,7 +652,9 @@
         renderHeaderAndStats();
         renderNotifications();
         renderOrders();
+        renderMt5Requests();
         renderLicenses();
+        renderUsers();
         renderEmailsAndSettings();
       } catch (e) {}
     }
@@ -598,17 +662,22 @@
     function renderHeaderAndStats() {
       const m = state.metrics || {};
       document.getElementById('stPending').textContent = m.pending_orders ?? 0;
+      document.getElementById('stMt5Reqs').textContent = m.pending_mt5_requests ?? 0;
       document.getElementById('stActive').textContent = m.active_licenses ?? 0;
       document.getElementById('stRevenue').textContent = `€${Number(m.total_revenue_eur || 0).toFixed(0)}`;
+      document.getElementById('stUsers').textContent = m.total_users ?? 0;
       document.getElementById('stUnread').textContent = state.unread_count ?? 0;
       document.getElementById('unreadBadge').textContent = `${state.unread_count ?? 0} new`;
+
+      const pSw = Number(m.pending_mt5_requests || 0);
+      document.getElementById('mt5TabBadge').textContent = pSw > 0 ? `(${pSw})` : '';
 
       const dbP = document.getElementById('dbModePill');
       dbP.textContent = state.is_postgres ? 'DB: Neon PostgreSQL' : 'DB: Local SQLite';
       dbP.className = 'pill ' + (state.is_postgres ? 'ok' : 'warn');
 
       const mailP = document.getElementById('mailerModePill');
-      mailP.textContent = state.mailer_configured ? 'Email: Ready' : 'Email: Needs App Password';
+      mailP.textContent = state.mailer_configured ? 'Email: Ready' : 'Email: Needs Config';
       mailP.className = 'pill ' + (state.mailer_configured ? 'ok' : 'warn');
     }
 
@@ -616,17 +685,22 @@
       const feed = document.getElementById('notifFeed');
       const items = state.notifications || [];
       if (!items.length) {
-        feed.innerHTML = '<div style="color:var(--muted);padding:14px;text-align:center;">No notifications yet. New PayPal orders &amp; security alerts appear here live.</div>';
+        feed.innerHTML = '<div style="color:var(--muted);padding:14px;text-align:center;">No notifications yet. New PayPal orders, MT5 switch requests &amp; security alerts appear here live.</div>';
         return;
       }
       const orderByRef = {};
       (state.orders || []).forEach(o => { orderByRef[o.order_ref] = o; });
+      const pendingSwByKey = {};
+      (state.mt5_requests || []).forEach(r => {
+        if (r.status === 'pending') pendingSwByKey[r.license_key] = r;
+      });
 
       feed.innerHTML = items.map(n => {
         const sevCls = 'sev-' + (n.severity || 'info');
         const unreadCls = Number(n.is_read) === 0 ? 'unread' : '';
         const ord = n.order_ref ? orderByRef[n.order_ref] : null;
         const canQuickApprove = ord && ord.status === 'pending';
+        const swReq = (n.event_type === 'MT5_SWITCH_REQUEST' && n.license_key) ? pendingSwByKey[n.license_key] : null;
         return `
           <div class="notif-card ${sevCls} ${unreadCls}">
             <div class="notif-head">
@@ -636,6 +710,8 @@
             <div class="notif-msg">${escapeHtml(n.message)}</div>
             <div class="notif-actions">
               ${canQuickApprove ? `<button class="btn btn-green" onclick="approveOrder('${escapeHtml(n.order_ref)}')">✅ Approve &amp; Send Key</button>` : ''}
+              ${swReq ? `<button class="btn btn-green" onclick="approveMt5Request(${Number(swReq.id)})">✅ Approve MT5 Switch</button>` : ''}
+              ${swReq ? `<button class="btn btn-red" onclick="rejectMt5Request(${Number(swReq.id)})">✕ Decline</button>` : ''}
               ${ord ? `<button class="btn" onclick="inspectOrder('${escapeHtml(n.order_ref)}')">👁 Inspect Order</button>` : ''}
               ${n.license_key ? `<button class="btn" onclick="copyText('${escapeHtml(n.license_key)}')">📋 Copy Key</button>` : ''}
             </div>
@@ -679,6 +755,39 @@
       }).join('');
     }
 
+    function renderMt5Requests() {
+      const tbody = document.getElementById('mt5ReqsBody');
+      const rows = (state.mt5_requests || []).filter(r => mt5Filter === 'all' || r.status === mt5Filter);
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px;">No MT5 switch requests in this filter.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(r => {
+        const cls = r.status === 'approved' ? 'ok' : (r.status === 'rejected' ? 'danger' : 'warn');
+        return `
+          <tr>
+            <td class="mono" style="font-size:11px;">${fmtTs(r.created_at)}</td>
+            <td><strong>${escapeHtml(r.customer_name)}</strong><div style="font-size:11.5px;color:var(--muted);">${escapeHtml(r.customer_email)}</div></td>
+            <td class="mono" style="color:var(--gold);">${escapeHtml(r.license_key)}</td>
+            <td class="mono">#${escapeHtml(r.old_mt5_login)} → <strong style="color:var(--gold);">#${escapeHtml(r.new_mt5_login)}</strong></td>
+            <td style="font-size:12px;">${escapeHtml(r.reason || '--')}</td>
+            <td>
+              <span class="pill ${cls}">${escapeHtml(r.status.toUpperCase())}</span>
+              ${r.admin_note ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">${escapeHtml(r.admin_note)}</div>` : ''}
+            </td>
+            <td>
+              ${r.status === 'pending' ? `
+                <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                  <button class="btn btn-green" onclick="approveMt5Request(${Number(r.id)})">✅ Approve</button>
+                  <button class="btn btn-red" onclick="rejectMt5Request(${Number(r.id)})">✕ Decline</button>
+                </div>
+              ` : '<span style="color:var(--muted);font-size:11.5px;">Reviewed</span>'}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
     function renderLicenses() {
       const tbody = document.getElementById('licensesBody');
       const q = (document.getElementById('licSearchInput').value || '').trim().toLowerCase();
@@ -714,6 +823,41 @@
                 <button class="btn" onclick="openEditLicModal('${escapeHtml(l.license_key)}')">✏️ Edit</button>
                 <button class="btn" onclick="resendEmail('${escapeHtml(l.license_key)}')">📧 Email</button>
               </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderUsers() {
+      const tbody = document.getElementById('usersBody');
+      const q = (document.getElementById('userSearchInput').value || '').trim().toLowerCase();
+      const rows = (state.users || []).filter(u => {
+        if (!q) return true;
+        return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+      });
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px;">No registered customer accounts yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(u => {
+        const stCls = u.status === 'active' ? 'ok' : 'danger';
+        const verPill = u.email_verified
+          ? '<span class="pill ok">Verified</span>'
+          : '<span class="pill warn">Unverified</span>';
+        const nextStatus = u.status === 'active' ? 'disabled' : 'active';
+        const btnLabel = u.status === 'active' ? 'Disable' : 'Activate';
+        const btnCls = u.status === 'active' ? 'btn-red' : 'btn-green';
+        return `
+          <tr>
+            <td><strong>${escapeHtml(u.full_name)}</strong><div style="font-size:11px;color:var(--muted);">ID #${Number(u.id)}</div></td>
+            <td>${escapeHtml(u.email)}<div style="margin-top:3px;">${verPill}</div></td>
+            <td class="mono">${Number(u.active_license_count || 0)} active / ${Number(u.license_count || 0)} total</td>
+            <td class="mono">${Number(u.order_count || 0)} orders • <strong style="color:var(--gold);">€${Number(u.total_spent_eur || 0).toFixed(0)}</strong></td>
+            <td class="mono" style="font-size:11px;">Join: ${fmtTs(u.created_at).slice(0,10)}<br/>Last: ${u.last_login_at ? fmtTs(u.last_login_at) : '--'}</td>
+            <td><span class="pill ${stCls}">${escapeHtml(u.status.toUpperCase())}</span></td>
+            <td>
+              <button class="btn ${btnCls}" onclick="toggleUserStatus(${Number(u.id)}, '${nextStatus}')">${btnLabel}</button>
             </td>
           </tr>
         `;
@@ -800,6 +944,45 @@
       });
       const data = await res.json();
       showToast(data.ok ? `Order ${ref} rejected.` : (data.error || 'Failed'));
+      await refreshAll();
+    }
+
+    async function approveMt5Request(id) {
+      const res = await fetch('/admin/api/mt5-requests/' + id + '/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        showToast('Error: ' + (data.error || 'Could not approve switch'));
+        return;
+      }
+      showToast(`MT5 switch approved! Key rebound to #${data.license.bound_mt5_login}.`);
+      await refreshAll();
+    }
+
+    async function rejectMt5Request(id) {
+      const reason = prompt('Reason for declining this MT5 switch request:', 'Please verify account ownership first') || '';
+      const res = await fetch('/admin/api/mt5-requests/' + id + '/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      showToast(data.ok ? 'MT5 switch request declined.' : (data.error || 'Failed'));
+      await refreshAll();
+    }
+
+    async function toggleUserStatus(userId, nextStatus) {
+      const res = await fetch('/admin/api/users/' + userId + '/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const data = await res.json();
+      if (data.ok) showToast(`Customer account marked ${nextStatus}.`);
+      else showToast(data.error || 'Failed');
       await refreshAll();
     }
 
@@ -934,7 +1117,7 @@
       const res = await fetch('/admin/api/licenses/' + encodeURIComponent(key) + '/resend', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
       const data = await res.json();
       if (data.ok) showToast(`Email sent to ${data.recipient || 'customer'}!`);
-      else showToast(`Email error: ${data.error || 'Check SMTP config'}`);
+      else showToast(`Email error: ${data.error || 'Check email config'}`);
       await refreshAll();
     }
 
