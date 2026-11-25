@@ -9,7 +9,14 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from config import BOT_BY_ID, PLAN_MONTHLY_DAYS, calculate_order_price_eur
+from config import (
+    BOT_BY_ID,
+    OFFICIAL_DOWNLOAD_URL,
+    PLACEHOLDER_DOWNLOAD_URLS,
+    PLAN_MONTHLY_DAYS,
+    calculate_order_price_eur,
+    resolve_download_url,
+)
 
 
 def generate_unique_license_key() -> str:
@@ -251,6 +258,14 @@ class Database:
                 value TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS growth_publish (
+                id INTEGER PRIMARY KEY,
+                snapshot_json TEXT NOT NULL,
+                meta_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """,
         ]
         with self._lock:
             with self._connect() as conn:
@@ -261,11 +276,17 @@ class Database:
                 # Safe migrations for pre-existing tables on Neon / SQLite
                 self._ensure_column(conn, "orders", "user_id", "INTEGER NOT NULL DEFAULT 0")
                 self._ensure_column(conn, "licenses", "user_id", "INTEGER NOT NULL DEFAULT 0")
-                self._ensure_default_setting(conn, "download_url", default_download_url or "https://aurumdesk.com/download-coming-soon")
+                resolved_dl = resolve_download_url(default_download_url or OFFICIAL_DOWNLOAD_URL)
+                self._ensure_default_setting(conn, "download_url", resolved_dl)
+                cur_dl_row = self._fetch_one(conn, "SELECT value FROM settings WHERE key = ?", ("download_url",))
+                if cur_dl_row and str(cur_dl_row.get("value") or "").strip() in PLACEHOLDER_DOWNLOAD_URLS:
+                    self._execute(conn, "UPDATE settings SET value = ? WHERE key = ?", (resolved_dl, "download_url"))
                 self._ensure_default_setting(conn, "admin_notify_email", default_contact_email or "eliodemaj07@gmail.com")
                 self._ensure_default_setting(conn, "send_admin_copy", "1")
                 self._ensure_default_setting(conn, "store_notice", "")
                 self._ensure_default_setting(conn, "paypal_me_url", "")
+                self._ensure_default_setting(conn, "growth_sync_token", f"ADG-{secrets.token_urlsafe(24)}")
+                self._ensure_default_setting(conn, "growth_sync_mt5_login", "")
                 conn.commit()
 
     def _ensure_default_setting(self, conn, key: str, value: str) -> None:
@@ -277,7 +298,9 @@ class Database:
         with self._lock:
             with self._connect() as conn:
                 rows = self._fetch_all(conn, "SELECT key, value FROM settings")
-                return {r["key"]: r["value"] for r in rows}
+                out = {r["key"]: r["value"] for r in rows}
+                out["download_url"] = resolve_download_url(out.get("download_url", ""))
+                return out
 
     def update_settings(self, updates: Dict[str, str]) -> Dict[str, str]:
         with self._lock:
@@ -1411,4 +1434,80 @@ class Database:
                     "total_revenue_eur": total_revenue,
                     "total_users": int((users_row or {}).get("cnt", 0)),
                     "pending_mt5_requests": int((mt5_row or {}).get("cnt", 0)),
+                }
+
+    def rotate_growth_sync_token(self) -> str:
+        new_tok = f"ADG-{secrets.token_urlsafe(24)}"
+        self.update_settings({"growth_sync_token": new_tok})
+        return new_tok
+
+    def save_published_growth(
+        self,
+        snapshot: Dict[str, Any],
+        mt5_login: str = "",
+        currency: str = "USD",
+        server_day: str = "",
+        sync_reason: str = "daily_24h",
+    ) -> Dict[str, Any]:
+        if not isinstance(snapshot, dict) or "portfolio" not in snapshot or "bots" not in snapshot:
+            raise ValueError("Invalid Growth payload: missing 'portfolio' or 'bots'.")
+        now_ts = int(time.time())
+        port = snapshot.get("portfolio") or {}
+        inf = port.get("info") or {}
+        meta = {
+            "mt5_login": str(mt5_login or "").strip(),
+            "currency": str(currency or "USD").strip() or "USD",
+            "server_day": str(server_day or "").strip(),
+            "sync_reason": str(sync_reason or "daily_24h").strip(),
+            "synced_at": now_ts,
+            "balance": float(inf.get("balance") or 0.0),
+            "equity": float(inf.get("equity") or 0.0),
+            "gain_pct": float(inf.get("gain_pct") or 0.0),
+            "profit": float(inf.get("profit") or 0.0),
+        }
+        snap_json = json.dumps(snapshot, ensure_ascii=False)
+        meta_json = json.dumps(meta, ensure_ascii=False)
+        with self._lock:
+            with self._connect() as conn:
+                existing = self._fetch_one(conn, "SELECT id FROM growth_publish WHERE id = 1")
+                if existing:
+                    self._execute(
+                        conn,
+                        "UPDATE growth_publish SET snapshot_json = ?, meta_json = ?, updated_at = ? WHERE id = 1",
+                        (snap_json, meta_json, now_ts),
+                    )
+                else:
+                    self._execute(
+                        conn,
+                        "INSERT INTO growth_publish (id, snapshot_json, meta_json, updated_at) VALUES (1, ?, ?, ?)",
+                        (snap_json, meta_json, now_ts),
+                    )
+                conn.commit()
+        acct_txt = f"MT5 #{meta['mt5_login']}" if meta["mt5_login"] else "Connected Account"
+        self.add_notification(
+            event_type="GROWTH_SYNC",
+            severity="success",
+            title=f"Live Growth Synced ({sync_reason})",
+            message=f"{acct_txt} | Day {meta['server_day'] or 'Today'} | Balance: ${meta['balance']:,.2f} | Gain: {meta['gain_pct']:+.2f}%",
+        )
+        return meta
+
+    def get_published_growth(self) -> Dict[str, Any]:
+        with self._lock:
+            with self._connect() as conn:
+                row = self._fetch_one(conn, "SELECT snapshot_json, meta_json, updated_at FROM growth_publish WHERE id = 1")
+                if not row:
+                    return {"has_data": False, "growth": None, "meta": {}}
+                try:
+                    snap = json.loads(row.get("snapshot_json") or "{}")
+                except Exception:
+                    snap = None
+                try:
+                    meta = json.loads(row.get("meta_json") or "{}")
+                except Exception:
+                    meta = {}
+                return {
+                    "has_data": bool(snap and isinstance(snap, dict) and "portfolio" in snap),
+                    "growth": snap,
+                    "meta": meta,
                 }

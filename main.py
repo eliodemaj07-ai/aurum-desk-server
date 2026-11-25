@@ -4,8 +4,10 @@ import hmac
 import json
 import os
 import sys
+import threading
 import time
 import urllib.parse
+from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
@@ -14,9 +16,200 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from config import BOT_CATALOG, BUNDLE_CATALOG, get_env_config
+from config import BOT_CATALOG, BUNDLE_CATALOG, get_env_config, resolve_download_url
 from db import Database
 from mailer import Mailer
+
+
+def _summarize_ua(ua: str) -> str:
+    s = str(ua or "").lower()
+    if "iphone" in s or "ipad" in s:
+        os_name = "iOS"
+    elif "android" in s:
+        os_name = "Android"
+    elif "windows" in s:
+        os_name = "Windows"
+    elif "macintosh" in s or "mac os" in s:
+        os_name = "Mac"
+    elif "linux" in s:
+        os_name = "Linux"
+    else:
+        os_name = "Web"
+
+    if "edg/" in s:
+        br = "Edge"
+    elif "firefox/" in s:
+        br = "Firefox"
+    elif "chrome/" in s and "edg/" not in s:
+        br = "Chrome"
+    elif "safari/" in s and "chrome/" not in s:
+        br = "Safari"
+    else:
+        br = "Browser"
+    return f"{os_name} • {br}"
+
+
+def _mask_ip(ip: str) -> str:
+    raw = str(ip or "").strip()
+    if not raw:
+        return "--"
+    if "." in raw:
+        parts = raw.split(".")
+        if len(parts) == 4:
+            return f"{parts[0]}.{parts[1]}.x.x"
+    if ":" in raw:
+        parts = raw.split(":")
+        return ":".join(parts[:3]) + "::"
+    return raw[:16]
+
+
+class PresenceTracker:
+    """Thread-safe real-time tracker for active Store / My Account visitors."""
+
+    TTL_SEC = 28
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tabs: Dict[str, Dict[str, Any]] = {}
+        self._peak_date: str = ""
+        self._peak_today: int = 0
+
+    def _prune_locked(self, now_ts: float) -> None:
+        cutoff = now_ts - self.TTL_SEC
+        stale = [tid for tid, info in self._tabs.items() if info["last_seen"] < cutoff]
+        for tid in stale:
+            self._tabs.pop(tid, None)
+
+    def _update_peak_locked(self, now_ts: float) -> None:
+        day_str = datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        if day_str != self._peak_date:
+            self._peak_date = day_str
+            self._peak_today = 0
+        people = len({v["visitor_id"] for v in self._tabs.values()})
+        if people > self._peak_today:
+            self._peak_today = people
+
+    def ping(
+        self,
+        visitor_id: str,
+        tab_id: str,
+        page: str,
+        ip: str,
+        user_agent: str,
+        user: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        now_ts = time.time()
+        clean_vid = str(visitor_id or "").strip()[:64] or f"ip:{ip or 'anon'}"
+        clean_tid = str(tab_id or "").strip()[:64] or f"{clean_vid}:default"
+        raw_page = str(page).strip().lower()
+        clean_page = raw_page if raw_page in ("account", "growth") else "store"
+        with self._lock:
+            self._prune_locked(now_ts)
+            prev = self._tabs.get(clean_tid)
+            first_seen = prev["first_seen"] if prev else now_ts
+            self._tabs[clean_tid] = {
+                "tab_id": clean_tid,
+                "visitor_id": clean_vid,
+                "page": clean_page,
+                "ip": _mask_ip(ip),
+                "device": _summarize_ua(user_agent),
+                "user_id": int(user["id"]) if user else 0,
+                "user_name": str(user.get("full_name") or "") if user else "",
+                "user_email": str(user.get("email") or "") if user else "",
+                "first_seen": first_seen,
+                "last_seen": now_ts,
+            }
+            self._update_peak_locked(now_ts)
+            return self._snapshot_locked(now_ts)
+
+    def leave(self, visitor_id: str = "", tab_id: str = "") -> None:
+        now_ts = time.time()
+        clean_tid = str(tab_id or "").strip()[:64]
+        clean_vid = str(visitor_id or "").strip()[:64]
+        with self._lock:
+            if clean_tid and clean_tid in self._tabs:
+                self._tabs.pop(clean_tid, None)
+            elif clean_vid:
+                to_del = [k for k, v in self._tabs.items() if v["visitor_id"] == clean_vid]
+                for k in to_del:
+                    self._tabs.pop(k, None)
+            self._prune_locked(now_ts)
+
+    def snapshot(self) -> Dict[str, Any]:
+        now_ts = time.time()
+        with self._lock:
+            self._prune_locked(now_ts)
+            self._update_peak_locked(now_ts)
+            return self._snapshot_locked(now_ts)
+
+    def _snapshot_locked(self, now_ts: float) -> Dict[str, Any]:
+        by_visitor: Dict[str, Dict[str, Any]] = {}
+        on_store_tabs = 0
+        on_account_tabs = 0
+        for tab in self._tabs.values():
+            if tab["page"] == "account":
+                on_account_tabs += 1
+            else:
+                on_store_tabs += 1
+            vid = tab["visitor_id"]
+            cur = by_visitor.get(vid)
+            if cur is None:
+                by_visitor[vid] = {
+                    "visitor_id": vid,
+                    "label": tab["user_name"] or f"Guest ({tab['ip']})",
+                    "email": tab["user_email"],
+                    "authenticated": bool(tab["user_id"]),
+                    "page": tab["page"],
+                    "ip": tab["ip"],
+                    "device": tab["device"],
+                    "tabs": 1,
+                    "first_seen": tab["first_seen"],
+                    "last_seen": tab["last_seen"],
+                }
+            else:
+                cur["tabs"] += 1
+                if tab["last_seen"] >= cur["last_seen"]:
+                    cur["last_seen"] = tab["last_seen"]
+                    cur["page"] = tab["page"]
+                if tab["first_seen"] < cur["first_seen"]:
+                    cur["first_seen"] = tab["first_seen"]
+                if tab["user_id"] and not cur["authenticated"]:
+                    cur["authenticated"] = True
+                    cur["label"] = tab["user_name"] or cur["label"]
+                    cur["email"] = tab["user_email"]
+
+        visitors_list = sorted(by_visitor.values(), key=lambda x: x["last_seen"], reverse=True)
+        logged_in_cnt = sum(1 for v in visitors_list if v["authenticated"])
+        guests_cnt = len(visitors_list) - logged_in_cnt
+        on_store_people = sum(1 for v in visitors_list if v["page"] == "store")
+        on_account_people = sum(1 for v in visitors_list if v["page"] == "account")
+        formatted = [
+            {
+                "label": v["label"],
+                "email": v["email"],
+                "authenticated": v["authenticated"],
+                "page": v["page"],
+                "ip": v["ip"],
+                "device": v["device"],
+                "tabs": v["tabs"],
+                "duration_sec": max(0, int(now_ts - v["first_seen"])),
+                "ago_sec": max(0, int(now_ts - v["last_seen"])),
+            }
+            for v in visitors_list[:30]
+        ]
+        return {
+            "online_people": len(visitors_list),
+            "online_tabs": len(self._tabs),
+            "on_store": on_store_people,
+            "on_account": on_account_people,
+            "on_store_tabs": on_store_tabs,
+            "on_account_tabs": on_account_tabs,
+            "logged_in": logged_in_cnt,
+            "guests": guests_cnt,
+            "peak_today": self._peak_today,
+            "updated_at": int(now_ts),
+            "visitors": formatted,
+        }
 
 
 def sign_session_token(secret: str, issued_at: int) -> str:
@@ -86,7 +279,12 @@ class AurumHTTPServer(ThreadingHTTPServer):
         self.env_cfg = env_cfg
         self.store_html = store_html
         self.admin_html = admin_html
+        self.presence = PresenceTracker()
         super().__init__(server_address, RequestHandlerClass)
+
+    @property
+    def presence_tracker(self) -> PresenceTracker:
+        return self.presence
 
 
 class AurumRequestHandler(BaseHTTPRequestHandler):
@@ -202,7 +400,7 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path in ("/", "/index.html", "/account", "/account/"):
+        if path in ("/", "/index.html", "/account", "/account/", "/growth", "/growth/"):
             self._send_html(self.server.store_html)  # type: ignore[attr-defined]
             return
 
@@ -212,6 +410,11 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
 
         if path == "/health":
             self._send_json({"ok": True, "service": "AurumDeskServer", "postgres": self.db.is_postgres})
+            return
+
+        if path == "/api/growth":
+            g_data = self.db.get_published_growth()
+            self._send_json({"ok": True, **g_data})
             return
 
         if path == "/api/catalog":
@@ -240,7 +443,7 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             settings = self.db.get_settings()
             dl_url = ""
             if ov.get("has_active_license"):
-                dl_url = settings.get("download_url") or self.env_cfg["DEFAULT_DOWNLOAD_URL"]
+                dl_url = resolve_download_url(settings.get("download_url") or self.env_cfg["DEFAULT_DOWNLOAD_URL"])
             ov["download_url"] = dl_url
             ov["ok"] = True
             self._send_json(ov)
@@ -263,12 +466,21 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "order": safe_order})
             return
 
+        if path == "/admin/api/live-visitors":
+            if not self._is_admin():
+                self._send_json({"ok": False, "error": "Unauthorized"}, status=401)
+                return
+            snap = self.server.presence.snapshot()  # type: ignore[attr-defined]
+            self._send_json({"ok": True, "live_visitors": snap})
+            return
+
         if path == "/admin/api/overview":
             if not self._is_admin():
                 self._send_json({"ok": False, "error": "Unauthorized"}, status=401)
                 return
             notif_data = self.db.get_notifications(limit=80)
             settings = self.db.get_settings()
+            g_pub = self.db.get_published_growth()
             self._send_json({
                 "ok": True,
                 "bots": BOT_CATALOG,
@@ -282,6 +494,13 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
                 "settings": settings,
                 "effective_paypal_me_url": self._effective_paypal_url(settings),
                 "metrics": self.db.get_dashboard_metrics(),
+                "live_visitors": self.server.presence.snapshot(),  # type: ignore[attr-defined]
+                "growth_sync": {
+                    "has_data": bool(g_pub.get("has_data")),
+                    "meta": g_pub.get("meta") or {},
+                    "token": settings.get("growth_sync_token", ""),
+                    "allowed_mt5": settings.get("growth_sync_mt5_login", ""),
+                },
                 "is_postgres": self.db.is_postgres,
                 "mailer_configured": self.mailer.is_configured(),
             })
@@ -309,6 +528,57 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             body = self._read_json()
         except Exception as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+
+        # ================= LIVE VISITOR PRESENCE =================
+        if path == "/api/presence/ping":
+            user = self._get_customer()
+            snap = self.server.presence.ping(  # type: ignore[attr-defined]
+                visitor_id=str(body.get("visitor_id", "")),
+                tab_id=str(body.get("tab_id", "")),
+                page=str(body.get("page", "store")),
+                ip=self._client_ip(),
+                user_agent=self.headers.get("User-Agent", ""),
+                user=user,
+            )
+            self._send_json({"ok": True, "online_people": snap["online_people"]})
+            return
+
+        if path == "/api/presence/leave":
+            self.server.presence.leave(  # type: ignore[attr-defined]
+                visitor_id=str(body.get("visitor_id", "")),
+                tab_id=str(body.get("tab_id", "")),
+            )
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/growth/sync":
+            settings = self.db.get_settings()
+            expected_tok = str(settings.get("growth_sync_token") or "").strip()
+            provided_tok = str(self.headers.get("X-Growth-Token") or body.get("sync_token") or "").strip()
+            if not expected_tok or not provided_tok or not hmac.compare_digest(provided_tok, expected_tok):
+                self._send_json({"ok": False, "error": "Invalid Growth Sync Token."}, status=401)
+                return
+            mt5_login = str(body.get("mt5_login") or "").strip()
+            allowed_mt5 = str(settings.get("growth_sync_mt5_login") or "").strip()
+            if allowed_mt5 and mt5_login != allowed_mt5:
+                self._send_json(
+                    {"ok": False, "error": f"Growth Sync is locked to MT5 #{allowed_mt5} (received #{mt5_login or 'none'})."},
+                    status=403,
+                )
+                return
+            try:
+                snap = body.get("growth") or body.get("snapshot")
+                meta = self.db.save_published_growth(
+                    snapshot=snap,
+                    mt5_login=mt5_login,
+                    currency=str(body.get("currency") or "USD"),
+                    server_day=str(body.get("server_day") or ""),
+                    sync_reason=str(body.get("sync_reason") or "daily_24h"),
+                )
+                self._send_json({"ok": True, "meta": meta})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
 
         # ================= CUSTOMER AUTH & PORTAL =================
@@ -708,13 +978,20 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
 
+        if path == "/admin/api/growth-sync/rotate-token":
+            new_tok = self.db.rotate_growth_sync_token()
+            self._send_json({"ok": True, "token": new_tok})
+            return
+
         if path == "/admin/api/settings":
-            allowed = {k: str(body[k]) for k in ("download_url", "admin_notify_email", "store_notice", "send_admin_copy", "paypal_me_url") if k in body}
+            allowed = {k: str(body[k]) for k in ("download_url", "admin_notify_email", "store_notice", "send_admin_copy", "paypal_me_url", "growth_sync_mt5_login") if k in body}
             if "paypal_me_url" in allowed:
                 pp = allowed["paypal_me_url"].strip().rstrip("/")
                 if pp and not pp.lower().startswith(("http://", "https://")):
                     pp = "https://" + pp.lstrip("/")
                 allowed["paypal_me_url"] = pp
+            if "growth_sync_mt5_login" in allowed:
+                allowed["growth_sync_mt5_login"] = allowed["growth_sync_mt5_login"].strip()
             updated = self.db.update_settings(allowed)
             self._send_json({"ok": True, "settings": updated, "effective_paypal_me_url": self._effective_paypal_url(updated)})
             return

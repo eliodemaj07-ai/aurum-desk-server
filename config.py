@@ -12,9 +12,9 @@ BOT_CATALOG: List[Dict] = [
     },
     {
         "id": "twoshots",
-        "name": "TwoShotsInRow",
-        "timeframe": "H4 / M5",
-        "description": "H4 EMA(200) bias + M5 ATR(14) Silver Bullet entries with break-even & partial TP.",
+        "name": "GOLDEN PULSE EA",
+        "timeframe": "H4 Box / M5",
+        "description": "00:00-04:00 H4 Range Box breakout & M5 retest with percentage SL/TP and 14-day drawdown guard.",
         "lifetime_eur": 30,
         "monthly_eur": 15,
     },
@@ -30,15 +30,15 @@ BOT_CATALOG: List[Dict] = [
         "id": "momentum",
         "name": "Momentum EA",
         "timeframe": "M5",
-        "description": "Tick volume & price ignition detector with 1:4 R:R ATR targeting.",
+        "description": "Billion Fortune Swing Stop breakout (M5 Swing High/Low, SL 750 / TP 900 pts) with trailing stop & 1% risk sizing.",
         "lifetime_eur": 20,
         "monthly_eur": 15,
     },
     {
         "id": "agnesa",
         "name": "Agnesa EA",
-        "timeframe": "H4 / M30",
-        "description": "Smart Money Concepts liquidity sweep + H4 EMA(50/100) trend alignment.",
+        "timeframe": "M5 / H1",
+        "description": "ASQ Safe Scalping EA with M5 EMA(150/510), H1 MTF EMA(50/200), RSI(10) & ATR breakout management.",
         "lifetime_eur": 30,
         "monthly_eur": 15,
     },
@@ -63,11 +63,29 @@ BOT_CATALOG: List[Dict] = [
 BOT_BY_ID: Dict[str, Dict] = {b["id"]: b for b in BOT_CATALOG}
 BOT_ORDER: List[str] = [b["id"] for b in BOT_CATALOG]
 
+OFFICIAL_DOWNLOAD_URL = "https://drive.google.com/drive/folders/1sAqs1WWrm2C4nC31e8ylz6sRO2s8siVg?usp=sharing"
+PLACEHOLDER_DOWNLOAD_URLS = {
+    "",
+    "https://aurumdesk.com/download-coming-soon",
+    "https://aurumdesk.com",
+    "https://drive.google.com/your-aurum-desk-zip-link",
+}
+
+
+def resolve_download_url(raw: str = "") -> str:
+    cleaned = str(raw or "").strip()
+    if cleaned in PLACEHOLDER_DOWNLOAD_URLS:
+        return OFFICIAL_DOWNLOAD_URL
+    return cleaned
+
+
 BUNDLE_CATALOG: List[Dict] = [
     {
         "id": "starter_3",
         "name": "Starter 3-EA Pack",
-        "tagline": "Best entry bundle for daily M5/M30 scalping",
+        "tagline": "Random 3-EA mix on every click — best entry bundle",
+        "pack_count": 3,
+        "random_pick": True,
         "bot_ids": ["twoshots", "agnesa", "momentum"],
         "lifetime_eur": 65,
         "monthly_eur": 35,
@@ -75,7 +93,9 @@ BUNDLE_CATALOG: List[Dict] = [
     {
         "id": "pro_4",
         "name": "Pro 4-EA Gold Pack",
-        "tagline": "Flagship breakout & recovery powerhouses",
+        "tagline": "Random 4-EA power mix on every click — 16% bundle discount",
+        "pack_count": 4,
+        "random_pick": True,
         "bot_ids": ["zenith", "mox", "multiversus", "albaniang"],
         "lifetime_eur": 210,
         "monthly_eur": 49,
@@ -84,6 +104,8 @@ BUNDLE_CATALOG: List[Dict] = [
         "id": "full_7",
         "name": "Full 7-EA Aurum Suite",
         "tagline": "All 7 Gold EAs unlocked — maximum diversification",
+        "pack_count": 7,
+        "random_pick": False,
         "bot_ids": ["zenith", "twoshots", "mox", "momentum", "agnesa", "multiversus", "albaniang"],
         "lifetime_eur": 249,
         "monthly_eur": 75,
@@ -101,16 +123,22 @@ def calculate_order_price_eur(plan_type: str, bot_ids: List[str], bundle_id: str
     if not clean_bots and bundle_id in BUNDLE_BY_ID:
         clean_bots = list(BUNDLE_BY_ID[bundle_id]["bot_ids"])
 
-    # Check exact bundle match first
-    for b in BUNDLE_CATALOG:
-        if (bundle_id == b["id"] or set(clean_bots) == set(b["bot_ids"])) and len(clean_bots) == len(b["bot_ids"]):
-            return int(b["monthly_eur"] if plan == "monthly" else b["lifetime_eur"])
+    indiv_sum = sum(
+        int(BOT_BY_ID[bid]["monthly_eur"] if plan == "monthly" else BOT_BY_ID[bid]["lifetime_eur"])
+        for bid in clean_bots
+    )
 
-    total = 0
-    for bid in clean_bots:
-        item = BOT_BY_ID[bid]
-        total += int(item["monthly_eur"] if plan == "monthly" else item["lifetime_eur"])
-    return total
+    for b in BUNDLE_CATALOG:
+        pack_count = int(b.get("pack_count") or len(b["bot_ids"]))
+        matches_bundle = (bundle_id == b["id"] and len(clean_bots) == pack_count)
+        matches_default = (set(clean_bots) == set(b["bot_ids"]) and len(clean_bots) == len(b["bot_ids"]))
+        if matches_bundle or matches_default:
+            base_price = int(b["monthly_eur"] if plan == "monthly" else b["lifetime_eur"])
+            if plan == "lifetime" and b["id"] == "pro_4" and indiv_sum < 245:
+                return min(base_price, max(95, int(round(indiv_sum * 0.84))))
+            return min(base_price, indiv_sum) if indiv_sum > 0 else base_price
+
+    return indiv_sum
 
 
 def get_env_config() -> Dict[str, str]:
@@ -129,6 +157,6 @@ def get_env_config() -> Dict[str, str]:
         "SMTP_FROM": os.environ.get("SMTP_FROM", "Aurum Desk <eliodemaj07@gmail.com>").strip(),
         "BREVO_API_KEY": os.environ.get("BREVO_API_KEY", "").strip(),
         "RESEND_API_KEY": os.environ.get("RESEND_API_KEY", "").strip(),
-        "DEFAULT_DOWNLOAD_URL": os.environ.get("DEFAULT_DOWNLOAD_URL", "https://aurumdesk.com/download-coming-soon").strip(),
+        "DEFAULT_DOWNLOAD_URL": resolve_download_url(os.environ.get("DEFAULT_DOWNLOAD_URL", "")),
         "APP_BASE_URL": os.environ.get("APP_BASE_URL", "").strip().rstrip("/"),
     }

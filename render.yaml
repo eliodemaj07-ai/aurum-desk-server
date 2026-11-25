@@ -30,4 +30,4 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: DEFAULT_DOWNLOAD_URL
-        value: "https://aurumdesk.com/download-coming-soon"
+        value: "https://drive.google.com/drive/folders/1sAqs1WWrm2C4nC31e8ylz6sRO2s8siVg?usp=sharing"

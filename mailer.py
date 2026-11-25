@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 
+from config import OFFICIAL_DOWNLOAD_URL, resolve_download_url
+
 
 def build_license_email_content(
     customer_name: str,
@@ -20,10 +22,11 @@ def build_license_email_content(
     contact_email: str,
     order_ref: str = "",
 ) -> Dict[str, str]:
+    resolved_dl = resolve_download_url(download_url)
     safe_name = html.escape(customer_name or "Trader")
     safe_key = html.escape(license_key)
     safe_mt5 = html.escape(str(mt5_login))
-    safe_dl = html.escape(download_url or "https://aurumdesk.com")
+    safe_dl = html.escape(resolved_dl or OFFICIAL_DOWNLOAD_URL)
     safe_contact = html.escape(contact_email or "eliodemaj07@gmail.com")
     safe_ref = html.escape(order_ref or "MANUAL")
 
@@ -50,7 +53,7 @@ def build_license_email_content(
         f"Plan            : {plan_label}\n"
         f"Unlocked EAs    :\n{bots_text}\n\n"
         f"=== HOW TO ACTIVATE ===\n"
-        f"1. Download Aurum Desk: {download_url}\n"
+        f"1. Download Aurum Desk: {resolved_dl}\n"
         f"2. Extract the ZIP folder on your Windows PC.\n"
         f"3. Open MetaTrader 5 logged into account #{mt5_login} and enable 'Algo Trading'.\n"
         f"4. Launch Aurum_Desk.vbs and paste your Unique Key above.\n\n"
@@ -400,7 +403,7 @@ class Mailer:
         settings: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         cfg = settings or (self.db.get_settings() if self.db else {})
-        dl_url = cfg.get("download_url") or self.env.get("DEFAULT_DOWNLOAD_URL", "")
+        dl_url = resolve_download_url(cfg.get("download_url") or self.env.get("DEFAULT_DOWNLOAD_URL", ""))
         contact = cfg.get("admin_notify_email") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
         content = build_license_email_content(
             customer_name=customer_name,
