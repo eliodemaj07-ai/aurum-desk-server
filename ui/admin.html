@@ -64,6 +64,20 @@
     .pill.ok { border-color: rgba(63,185,80,0.45); color: #7ee787; background: rgba(63,185,80,0.12); }
     .pill.warn { border-color: rgba(210,153,34,0.55); color: #f3cc73; background: rgba(210,153,34,0.14); }
     .pill.danger { border-color: rgba(248,81,73,0.55); color: #ffb3ad; background: rgba(248,81,73,0.16); }
+    .live-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #3fb950;
+      box-shadow: 0 0 0 0 rgba(63,185,80,0.7);
+      animation: livePulse 1.8s infinite;
+    }
+    @keyframes livePulse {
+      0% { box-shadow: 0 0 0 0 rgba(63,185,80,0.7); }
+      70% { box-shadow: 0 0 0 7px rgba(63,185,80,0); }
+      100% { box-shadow: 0 0 0 0 rgba(63,185,80,0); }
+    }
 
     .container { max-width: 1480px; margin: 0 auto; padding: 16px 18px 40px; }
 
@@ -243,6 +257,10 @@
   <header class="topbar">
     <div class="brand">
       <span>AURUM DESK — ADMIN CONSOLE</span>
+      <span class="pill ok" id="liveOnlinePill" style="cursor:pointer;" onclick="switchAdminTab('visitors')" title="Click to view Live Visitors">
+        <span class="live-dot"></span>
+        <span id="liveOnlinePillTxt">0 Live on Site</span>
+      </span>
       <span class="pill" id="dbModePill">DB: --</span>
       <span class="pill" id="mailerModePill">Email: --</span>
     </div>
@@ -257,6 +275,11 @@
 
   <main class="container" id="adminMain">
     <div class="stats-row">
+      <div class="stat-box" style="border-color:rgba(63,185,80,0.45);cursor:pointer;" onclick="switchAdminTab('visitors')">
+        <div class="stat-lbl" style="display:flex;align-items:center;gap:6px;"><span class="live-dot"></span> Live Visitors Now</div>
+        <div class="stat-val" style="color:#7ee787;" id="stOnlineNow">0</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:3px;" id="stOnlineMeta">Store: 0 • Account: 0 • Peak: 0</div>
+      </div>
       <div class="stat-box">
         <div class="stat-lbl">Pending Orders</div>
         <div class="stat-val" style="color:var(--gold);" id="stPending">0</div>
@@ -298,6 +321,7 @@
       <section class="panel">
         <div class="tabs">
           <button class="tab-btn active" id="tabBtnOrders" onclick="switchAdminTab('orders')">Orders Queue</button>
+          <button class="tab-btn" id="tabBtnVisitors" onclick="switchAdminTab('visitors')"><span class="live-dot" style="margin-right:5px;"></span>Live Visitors <span id="liveTabBadge">(0)</span></button>
           <button class="tab-btn" id="tabBtnMt5Reqs" onclick="switchAdminTab('mt5reqs')">MT5 Switch Requests <span id="mt5TabBadge"></span></button>
           <button class="tab-btn" id="tabBtnLicenses" onclick="switchAdminTab('licenses')">Unique Keys &amp; MT5 Locks</button>
           <button class="tab-btn" id="tabBtnUsers" onclick="switchAdminTab('users')">Customers</button>
@@ -329,6 +353,39 @@
                 </tr>
               </thead>
               <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- LIVE VISITORS TAB -->
+        <div id="tabVisitors" class="hidden" style="padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <span class="pill ok"><span class="live-dot"></span> People Online: <strong id="lvPeople">0</strong></span>
+              <span class="pill">Open Tabs: <strong id="lvTabs">0</strong></span>
+              <span class="pill">Store: <strong id="lvStore">0</strong></span>
+              <span class="pill">My Account: <strong id="lvAccount">0</strong></span>
+              <span class="pill ok">Signed In: <strong id="lvSignedIn">0</strong></span>
+              <span class="pill">Guests: <strong id="lvGuests">0</strong></span>
+              <span class="pill warn">Peak Today: <strong id="lvPeak">0</strong></span>
+            </div>
+            <span style="font-size:11.5px;color:var(--muted);">Auto-updates live every 2 seconds (Admin view excluded)</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Visitor / Customer</th>
+                  <th>Type</th>
+                  <th>Current Page</th>
+                  <th>Device / Browser</th>
+                  <th>IP Prefix</th>
+                  <th>Tabs</th>
+                  <th>Duration</th>
+                  <th>Last Ping</th>
+                </tr>
+              </thead>
+              <tbody id="liveVisitorsBody"></tbody>
             </table>
           </div>
         </div>
@@ -435,6 +492,32 @@
               </label>
             </div>
           </div>
+
+          <div style="background:#0a0f18;border:1px solid rgba(245,213,122,0.32);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <strong style="color:var(--gold);font-size:13px;">📈 Live Growth Sync (Windows Aurum Desk → Website /growth)</strong>
+              <span class="pill" id="gsStatusPill">Waiting for 1st Sync</span>
+            </div>
+            <div style="font-size:12px;color:#cfd6e0;margin-bottom:10px;line-height:1.45;">
+              Paste this private token inside <strong>your personal Windows Aurum Desk app → Growth tab → 🌐 Website Sync</strong>. Your app will automatically publish your Growth data to the website every <strong>24 hours</strong> and whenever it restarts.
+            </div>
+            <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:10px;align-items:end;">
+              <div>
+                <label style="font-size:11.5px;color:var(--muted);">Private Growth Sync Token</label>
+                <div style="display:flex;gap:6px;">
+                  <input class="input mono" id="setGrowthToken" readonly style="font-size:12px;color:var(--gold);" />
+                  <button type="button" class="btn" onclick="copyText(document.getElementById('setGrowthToken').value)">📋 Copy</button>
+                  <button type="button" class="btn" onclick="rotateGrowthToken()">🔄 New</button>
+                </div>
+              </div>
+              <div>
+                <label style="font-size:11.5px;color:var(--muted);">Lock Sync to Your MT5 Account # (Optional)</label>
+                <input class="input mono" id="setGrowthMt5" placeholder="e.g. 52489102 (leave blank for any)" />
+              </div>
+            </div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:8px;" id="gsLastMetaText">No Windows sync received yet.</div>
+          </div>
+
           <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
             <button class="btn btn-gold" onclick="saveSettings()">Save Settings</button>
             <button class="btn" onclick="sendTestEmail()">📧 Send Test Email to Admin Email</button>
@@ -621,6 +704,7 @@
     function switchAdminTab(tab) {
       const map = {
         orders: ['tabOrders', 'tabBtnOrders'],
+        visitors: ['tabVisitors', 'tabBtnVisitors'],
         mt5reqs: ['tabMt5Reqs', 'tabBtnMt5Reqs'],
         licenses: ['tabLicenses', 'tabBtnLicenses'],
         users: ['tabUsers', 'tabBtnUsers'],
@@ -634,6 +718,79 @@
 
     function setOrderFilter(f) { orderFilter = f; renderOrders(); }
     function setMt5Filter(f) { mt5Filter = f; renderMt5Requests(); }
+
+    function fmtDuration(sec) {
+      const s = Math.max(0, Number(sec || 0));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      if (m < 60) return `${m}m ${r}s`;
+      const h = Math.floor(m / 60);
+      return `${h}h ${m % 60}m`;
+    }
+
+    function renderLiveVisitors(lvData) {
+      const lv = lvData || state.live_visitors || {};
+      const people = Number(lv.online_people || 0);
+      const tabs = Number(lv.online_tabs || 0);
+      const onStore = Number(lv.on_store || 0);
+      const onAccount = Number(lv.on_account || 0);
+      const signedIn = Number(lv.logged_in || 0);
+      const guests = Number(lv.guests || 0);
+      const peak = Number(lv.peak_today || 0);
+
+      document.getElementById('liveOnlinePillTxt').textContent = `${people} Live on Site`;
+      document.getElementById('stOnlineNow').textContent = people;
+      document.getElementById('stOnlineMeta').textContent = `Store: ${onStore} • Account: ${onAccount} • Peak: ${peak}`;
+      document.getElementById('liveTabBadge').textContent = `(${people})`;
+
+      document.getElementById('lvPeople').textContent = people;
+      document.getElementById('lvTabs').textContent = tabs;
+      document.getElementById('lvStore').textContent = onStore;
+      document.getElementById('lvAccount').textContent = onAccount;
+      document.getElementById('lvSignedIn').textContent = signedIn;
+      document.getElementById('lvGuests').textContent = guests;
+      document.getElementById('lvPeak').textContent = peak;
+
+      const tbody = document.getElementById('liveVisitorsBody');
+      const rows = lv.visitors || [];
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:18px;">No active visitors on the public website right now. Live counter updates automatically as soon as someone opens the site.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(v => {
+        const typePill = v.authenticated
+          ? '<span class="pill ok">Customer</span>'
+          : '<span class="pill">Guest</span>';
+        const pagePill = v.page === 'account'
+          ? '<span class="pill warn">My Account</span>'
+          : (v.page === 'growth' ? '<span class="pill ok" style="border-color:rgba(245,213,122,0.45);color:#f5d57a;">Live Growth</span>' : '<span class="pill ok">Store</span>');
+        return `
+          <tr>
+            <td><strong>${escapeHtml(v.label)}</strong>${v.email ? `<div style="font-size:11px;color:var(--muted);">${escapeHtml(v.email)}</div>` : ''}</td>
+            <td>${typePill}</td>
+            <td>${pagePill}</td>
+            <td style="font-size:12px;">${escapeHtml(v.device || '--')}</td>
+            <td class="mono" style="font-size:11.5px;">${escapeHtml(v.ip || '--')}</td>
+            <td class="mono">${Number(v.tabs || 1)}</td>
+            <td class="mono" style="color:var(--gold);">${fmtDuration(v.duration_sec)}</td>
+            <td class="mono" style="color:#7ee787;">${Number(v.ago_sec || 0)}s ago</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function refreshLiveVisitors() {
+      try {
+        const res = await fetch('/admin/api/live-visitors');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.ok && data.live_visitors) {
+          state.live_visitors = data.live_visitors;
+          renderLiveVisitors(data.live_visitors);
+        }
+      } catch (e) {}
+    }
 
     async function refreshAll() {
       try {
@@ -654,6 +811,7 @@
           lastNotifId = newest;
         }
         renderHeaderAndStats();
+        renderLiveVisitors(data.live_visitors);
         renderNotifications();
         renderOrders();
         renderMt5Requests();
@@ -874,7 +1032,26 @@
       if (document.activeElement.id !== 'setPaypalUrl') document.getElementById('setPaypalUrl').value = s.paypal_me_url || state.effective_paypal_me_url || '';
       if (document.activeElement.id !== 'setAdminEmail') document.getElementById('setAdminEmail').value = s.admin_notify_email || '';
       if (document.activeElement.id !== 'setStoreNotice') document.getElementById('setStoreNotice').value = s.store_notice || '';
+      if (document.activeElement.id !== 'setGrowthMt5') document.getElementById('setGrowthMt5').value = s.growth_sync_mt5_login || '';
       document.getElementById('setSendCopy').checked = s.send_admin_copy !== '0';
+
+      const gs = state.growth_sync || {};
+      const tokEl = document.getElementById('setGrowthToken');
+      if (tokEl) tokEl.value = gs.token || s.growth_sync_token || '';
+      const gsPill = document.getElementById('gsStatusPill');
+      const gsMeta = document.getElementById('gsLastMetaText');
+      if (gsPill && gsMeta) {
+        if (gs.has_data && gs.meta) {
+          gsPill.textContent = 'Synced Live';
+          gsPill.className = 'pill ok';
+          const m = gs.meta;
+          gsMeta.textContent = `Last Sync: ${fmtTs(m.synced_at)} UTC | MT5 #${m.mt5_login || '--'} | Day: ${m.server_day || '--'} (${m.sync_reason || '24h'}) | Balance: $${Number(m.balance || 0).toFixed(2)} | Gain: ${Number(m.gain_pct || 0).toFixed(2)}%`;
+        } else {
+          gsPill.textContent = 'Waiting for 1st Sync';
+          gsPill.className = 'pill warn';
+          gsMeta.textContent = 'No Windows sync received yet.';
+        }
+      }
 
       const tbody = document.getElementById('emailsBody');
       const logs = state.email_logs || [];
@@ -1126,6 +1303,18 @@
       await refreshAll();
     }
 
+    async function rotateGrowthToken() {
+      if (!confirm('Generate a new Growth Sync Token? You will need to update the token inside your Windows Aurum Desk app.')) return;
+      const res = await fetch('/admin/api/growth-sync/rotate-token', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('New Growth Sync Token generated!');
+        await refreshAll();
+      } else {
+        showToast(data.error || 'Failed to rotate token');
+      }
+    }
+
     async function saveSettings() {
       const res = await fetch('/admin/api/settings', {
         method: 'POST',
@@ -1135,6 +1324,7 @@
           paypal_me_url: document.getElementById('setPaypalUrl').value.trim(),
           admin_notify_email: document.getElementById('setAdminEmail').value.trim(),
           store_notice: document.getElementById('setStoreNotice').value.trim(),
+          growth_sync_mt5_login: document.getElementById('setGrowthMt5').value.trim(),
           send_admin_copy: document.getElementById('setSendCopy').checked ? '1' : '0',
         }),
       });
@@ -1157,6 +1347,7 @@
 
     refreshAll();
     setInterval(refreshAll, 5000);
+    setInterval(refreshLiveVisitors, 2000);
   </script>
 </body>
 </html>
