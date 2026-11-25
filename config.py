@@ -157,6 +157,8 @@ def get_env_config() -> Dict[str, str]:
         "SMTP_FROM": os.environ.get("SMTP_FROM", "Aurum Desk <eliodemaj07@gmail.com>").strip(),
         "BREVO_API_KEY": os.environ.get("BREVO_API_KEY", "").strip(),
         "RESEND_API_KEY": os.environ.get("RESEND_API_KEY", "").strip(),
+        "GOOGLE_SCRIPT_WEBHOOK_URL": os.environ.get("GOOGLE_SCRIPT_WEBHOOK_URL", "").strip(),
+        "GOOGLE_SCRIPT_SECRET": os.environ.get("GOOGLE_SCRIPT_SECRET", "").strip(),
         "DEFAULT_DOWNLOAD_URL": resolve_download_url(os.environ.get("DEFAULT_DOWNLOAD_URL", "")),
         "APP_BASE_URL": os.environ.get("APP_BASE_URL", "").strip().rstrip("/"),
     }

@@ -583,6 +583,72 @@ class TestAurumDeskServer(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(s_ok2["ok"])
 
+    def test_07_google_apps_script_mailer_webhook(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from mailer import Mailer
+
+        captured = []
+
+        class MockGScriptHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                if body.get("secret") != "GS-TEST-SEC":
+                    raw = json.dumps({"ok": False, "error": "Forbidden"}).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                captured.append(body)
+                # Simulate real Google Apps Script 302 redirect to /echo
+                self.send_response(302)
+                self.send_header("Location", "/echo")
+                self.end_headers()
+
+            def do_GET(self):
+                if self.path == "/echo":
+                    raw = json.dumps({"ok": True}).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+
+        gs_srv = HTTPServer(("127.0.0.1", 0), MockGScriptHandler)
+        gs_port = gs_srv.server_address[1]
+        th = threading.Thread(target=gs_srv.serve_forever, daemon=True)
+        th.start()
+        try:
+            m = Mailer({
+                "GOOGLE_SCRIPT_WEBHOOK_URL": f"http://127.0.0.1:{gs_port}/exec",
+                "GOOGLE_SCRIPT_SECRET": "GS-TEST-SEC",
+                "SMTP_FROM": "Aurum Desk <eliodemaj07@gmail.com>",
+                "PUBLIC_CONTACT_EMAIL": "eliodemaj07@gmail.com",
+            }, db=self.server.db)
+            self.assertTrue(m.is_configured())
+            res = m.send_email(
+                to_email="buyer@example.com",
+                subject="Test Google Script",
+                text_body="Hello plain",
+                html_body="<p>Hello html</p>",
+            )
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["provider"], "google_apps_script")
+            self.assertEqual(len(captured), 1)
+            self.assertEqual(captured[0]["to"], "buyer@example.com")
+            self.assertEqual(captured[0]["sender_name"], "Aurum Desk")
+            logs = self.server.db.get_email_logs(limit=5)
+            self.assertEqual(logs[0]["status"], "SENT")
+            self.assertEqual(logs[0]["provider"], "google_apps_script")
+        finally:
+            gs_srv.shutdown()
+            gs_srv.server_close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

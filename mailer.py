@@ -239,7 +239,12 @@ class Mailer:
         self.db = db
 
     def is_configured(self) -> bool:
-        return bool(self.env.get("BREVO_API_KEY") or self.env.get("RESEND_API_KEY") or (self.env.get("SMTP_USER") and self.env.get("SMTP_PASS")))
+        return bool(
+            self.env.get("GOOGLE_SCRIPT_WEBHOOK_URL")
+            or self.env.get("BREVO_API_KEY")
+            or self.env.get("RESEND_API_KEY")
+            or (self.env.get("SMTP_USER") and self.env.get("SMTP_PASS"))
+        )
 
     def send_email(
         self,
@@ -254,13 +259,18 @@ class Mailer:
         if not recipient or "@" not in recipient:
             return {"ok": False, "provider": "none", "error": "Invalid recipient email"}
 
+        gscript_url = self.env.get("GOOGLE_SCRIPT_WEBHOOK_URL", "").strip()
         brevo_key = self.env.get("BREVO_API_KEY", "").strip()
         resend_key = self.env.get("RESEND_API_KEY", "").strip()
         smtp_user = self.env.get("SMTP_USER", "").strip()
         smtp_pass = self.env.get("SMTP_PASS", "").strip()
 
         res: Dict[str, Any]
-        if brevo_key:
+        if gscript_url:
+            res = self._send_google_script(gscript_url, recipient, subject, text_body, html_body)
+            if not res.get("ok") and brevo_key:
+                res = self._send_brevo(brevo_key, recipient, subject, text_body, html_body)
+        elif brevo_key:
             res = self._send_brevo(brevo_key, recipient, subject, text_body, html_body)
         elif resend_key:
             res = self._send_resend(resend_key, recipient, subject, text_body, html_body)
@@ -270,7 +280,7 @@ class Mailer:
             res = {
                 "ok": False,
                 "provider": "unconfigured",
-                "error": "Email credentials not configured yet (set SMTP_PASS or BREVO_API_KEY / RESEND_API_KEY).",
+                "error": "Email credentials not configured yet (set GOOGLE_SCRIPT_WEBHOOK_URL, BREVO_API_KEY, RESEND_API_KEY, or SMTP_PASS).",
             }
 
         if self.db is not None:
@@ -284,6 +294,65 @@ class Mailer:
                 license_key=license_key,
             )
         return res
+
+    def _send_google_script(self, webhook_url: str, to_email: str, subject: str, text_body: str, html_body: str) -> Dict[str, Any]:
+        secret = self.env.get("GOOGLE_SCRIPT_SECRET", "").strip()
+        sender_raw = self.env.get("SMTP_FROM", "") or self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
+        sender_name = "Aurum Desk"
+        reply_to = self.env.get("PUBLIC_CONTACT_EMAIL", "eliodemaj07@gmail.com")
+        if "<" in sender_raw and ">" in sender_raw:
+            sender_name = sender_raw.split("<")[0].strip().strip('"') or "Aurum Desk"
+            reply_to = sender_raw.split("<")[1].split(">")[0].strip() or reply_to
+
+        payload = json.dumps({
+            "secret": secret,
+            "to": to_email,
+            "subject": subject,
+            "text": text_body,
+            "html": html_body,
+            "sender_name": sender_name,
+            "reply_to": reply_to,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "AurumDeskServer/1.1",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                raw_body = r.read().decode("utf-8", errors="replace").strip()
+                if not (200 <= r.status < 300):
+                    return {"ok": False, "provider": "google_apps_script", "error": f"HTTP {r.status}"}
+                try:
+                    data = json.loads(raw_body)
+                except Exception:
+                    return {
+                        "ok": False,
+                        "provider": "google_apps_script",
+                        "error": "Google Apps Script returned non-JSON (check Deploy -> Who has access: Anyone).",
+                    }
+                if data.get("ok"):
+                    return {"ok": True, "provider": "google_apps_script", "error": ""}
+                return {
+                    "ok": False,
+                    "provider": "google_apps_script",
+                    "error": str(data.get("error") or "Google Apps Script rejected request."),
+                }
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", errors="replace").strip()[:300]
+            except Exception:
+                pass
+            return {"ok": False, "provider": "google_apps_script", "error": f"HTTP {exc.code}: {detail or exc.reason}"}
+        except Exception as exc:
+            return {"ok": False, "provider": "google_apps_script", "error": str(exc)}
 
     def _send_smtp(self, to_email: str, subject: str, text_body: str, html_body: str) -> Dict[str, Any]:
         host = self.env.get("SMTP_HOST", "smtp.gmail.com")
