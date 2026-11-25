@@ -1,4 +1,5 @@
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -64,9 +65,9 @@ def _mask_ip(ip: str) -> str:
 
 
 class PresenceTracker:
-    """Thread-safe real-time tracker for active Store / My Account visitors."""
+    """Thread-safe real-time tracker for active Store / My Account / Growth visitors."""
 
-    TTL_SEC = 28
+    TTL_SEC = 40
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -272,6 +273,7 @@ def verify_customer_token(token: str, secret: str, max_age_sec: int = 86400 * 30
 class AurumHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 64
 
     def __init__(self, server_address, RequestHandlerClass, db: Database, mailer: Mailer, env_cfg: Dict[str, str], store_html: bytes, admin_html: bytes):
         self.db = db
@@ -279,6 +281,8 @@ class AurumHTTPServer(ThreadingHTTPServer):
         self.env_cfg = env_cfg
         self.store_html = store_html
         self.admin_html = admin_html
+        self.store_html_gz = gzip.compress(store_html, compresslevel=6)
+        self.admin_html_gz = gzip.compress(admin_html, compresslevel=6)
         self.presence = PresenceTracker()
         super().__init__(server_address, RequestHandlerClass)
 
@@ -362,27 +366,40 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
         sec_flag = "; Secure" if self._is_https() else ""
         return f"aurum_customer_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={86400 * 30}{sec_flag}"
 
-    def _send_html(self, data: bytes, status: int = 200) -> None:
+    def _accepts_gzip(self) -> bool:
+        return "gzip" in self.headers.get("Accept-Encoding", "").lower()
+
+    def _send_html(self, data: bytes, status: int = 200, gz_data: Optional[bytes] = None) -> None:
+        use_gz = self._accepts_gzip()
+        body = (gz_data if gz_data is not None else gzip.compress(data, compresslevel=6)) if use_gz else data
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(data)))
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(data)
+            self.wfile.write(body)
 
     def _send_json(self, payload: Any, status: int = 200, extra_headers: Optional[Dict[str, str]] = None) -> None:
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        use_gz = len(raw) >= 512 and self._accepts_gzip()
+        body = gzip.compress(raw, compresslevel=5) if use_gz else raw
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(raw)))
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
         if extra_headers:
             for k, v in extra_headers.items():
                 self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(raw)
+            self.wfile.write(body)
 
     def do_HEAD(self) -> None:
         self.do_GET()
@@ -401,11 +418,11 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path in ("/", "/index.html", "/account", "/account/", "/growth", "/growth/"):
-            self._send_html(self.server.store_html)  # type: ignore[attr-defined]
+            self._send_html(self.server.store_html, gz_data=self.server.store_html_gz)  # type: ignore[attr-defined]
             return
 
         if path == "/admin" or path == "/admin/":
-            self._send_html(self.server.admin_html)  # type: ignore[attr-defined]
+            self._send_html(self.server.admin_html, gz_data=self.server.admin_html_gz)  # type: ignore[attr-defined]
             return
 
         if path == "/health":
@@ -478,29 +495,23 @@ class AurumRequestHandler(BaseHTTPRequestHandler):
             if not self._is_admin():
                 self._send_json({"ok": False, "error": "Unauthorized"}, status=401)
                 return
-            notif_data = self.db.get_notifications(limit=80)
-            settings = self.db.get_settings()
-            g_pub = self.db.get_published_growth()
+            ov = self.db.get_admin_overview()
+            settings = ov["settings"]
             self._send_json({
                 "ok": True,
                 "bots": BOT_CATALOG,
-                "orders": self.db.get_orders(status_filter="all", include_screenshots=False),
-                "licenses": self.db.get_licenses(),
-                "mt5_requests": self.db.get_mt5_requests(status_filter="all"),
-                "users": self.db.get_users(),
-                "notifications": notif_data["items"],
-                "unread_count": notif_data["unread_count"],
-                "email_logs": self.db.get_email_logs(limit=60),
+                "orders": ov["orders"],
+                "licenses": ov["licenses"],
+                "mt5_requests": ov["mt5_requests"],
+                "users": ov["users"],
+                "notifications": ov["notifications"],
+                "unread_count": ov["unread_count"],
+                "email_logs": ov["email_logs"],
                 "settings": settings,
                 "effective_paypal_me_url": self._effective_paypal_url(settings),
-                "metrics": self.db.get_dashboard_metrics(),
+                "metrics": ov["metrics"],
                 "live_visitors": self.server.presence.snapshot(),  # type: ignore[attr-defined]
-                "growth_sync": {
-                    "has_data": bool(g_pub.get("has_data")),
-                    "meta": g_pub.get("meta") or {},
-                    "token": settings.get("growth_sync_token", ""),
-                    "allowed_mt5": settings.get("growth_sync_mt5_login", ""),
-                },
+                "growth_sync": ov["growth_sync"],
                 "is_postgres": self.db.is_postgres,
                 "mailer_configured": self.mailer.is_configured(),
             })
@@ -1044,6 +1055,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        srv.db.close()
         srv.server_close()
 
 

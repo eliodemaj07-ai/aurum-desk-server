@@ -1271,7 +1271,10 @@
       } catch (e) { return 't_' + _randHex(); }
     })();
 
+    let presencePingInFlight = false;
     async function sendPresencePing() {
+      if (presencePingInFlight) return;
+      presencePingInFlight = true;
       try {
         if (document.visibilityState === 'hidden') return;
         await fetch('/api/presence/ping', {
@@ -1280,7 +1283,10 @@
           body: JSON.stringify({ visitor_id: visitorId, tab_id: tabId, page: currentView }),
           keepalive: true,
         });
-      } catch (e) {}
+      } catch (e) {
+      } finally {
+        presencePingInFlight = false;
+      }
     }
 
     function sendPresenceLeave() {
@@ -1322,7 +1328,7 @@
     async function initApp() {
       await Promise.all([loadCatalog(), refreshSession()]);
       sendPresencePing();
-      setInterval(sendPresencePing, 8000);
+      setInterval(sendPresencePing, 15000);
       setInterval(() => {
         if (currentView === 'growth') loadWebsiteGrowth();
       }, 300000);

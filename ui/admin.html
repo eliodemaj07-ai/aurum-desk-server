@@ -780,7 +780,14 @@
       }).join('');
     }
 
+    let visitorsInFlight = false;
+    let overviewInFlight = false;
+    let overviewTimer = null;
+    let visitorsTimer = null;
+
     async function refreshLiveVisitors() {
+      if (visitorsInFlight || document.visibilityState === 'hidden') return;
+      visitorsInFlight = true;
       try {
         const res = await fetch('/admin/api/live-visitors');
         if (!res.ok) return;
@@ -789,14 +796,26 @@
           state.live_visitors = data.live_visitors;
           renderLiveVisitors(data.live_visitors);
         }
-      } catch (e) {}
+      } catch (e) {
+      } finally {
+        visitorsInFlight = false;
+      }
     }
 
     async function refreshAll() {
+      if (overviewInFlight) return;
+      overviewInFlight = true;
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 20000);
       try {
-        const res = await fetch('/admin/api/overview');
+        const res = await fetch('/admin/api/overview', { signal: ctrl.signal });
         if (res.status === 401) {
           document.getElementById('loginBackdrop').classList.remove('hidden');
+          return;
+        }
+        if (!res.ok) {
+          const dbP = document.getElementById('dbModePill');
+          if (dbP) { dbP.textContent = `Server ${res.status} — Retrying`; dbP.className = 'pill warn'; }
           return;
         }
         const data = await res.json();
@@ -818,7 +837,16 @@
         renderLicenses();
         renderUsers();
         renderEmailsAndSettings();
-      } catch (e) {}
+      } catch (e) {
+        const dbP = document.getElementById('dbModePill');
+        if (dbP && dbP.textContent === 'DB: --') {
+          dbP.textContent = 'DB: Connecting...';
+          dbP.className = 'pill warn';
+        }
+      } finally {
+        clearTimeout(tid);
+        overviewInFlight = false;
+      }
     }
 
     function renderHeaderAndStats() {
@@ -1345,9 +1373,29 @@
       navigator.clipboard.writeText(t).then(() => showToast('Copied: ' + t));
     }
 
-    refreshAll();
-    setInterval(refreshAll, 5000);
-    setInterval(refreshLiveVisitors, 2000);
+    async function pollOverviewLoop() {
+      if (document.visibilityState !== 'hidden') {
+        await refreshAll();
+      }
+      overviewTimer = setTimeout(pollOverviewLoop, 12000);
+    }
+
+    async function pollVisitorsLoop() {
+      if (document.visibilityState !== 'hidden') {
+        await refreshLiveVisitors();
+      }
+      visitorsTimer = setTimeout(pollVisitorsLoop, 4000);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        refreshAll();
+        refreshLiveVisitors();
+      }
+    });
+
+    pollOverviewLoop();
+    pollVisitorsLoop();
   </script>
 </body>
 </html>

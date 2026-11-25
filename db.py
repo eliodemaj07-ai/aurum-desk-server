@@ -75,6 +75,11 @@ class Database:
         self.is_postgres = self.database_url.startswith("postgres://") or self.database_url.startswith("postgresql://")
         self._lock = threading.RLock()
         self._pg_mod = None
+        self._pg_conn = None
+        self._pg_last_used_mono = 0.0
+        self._settings_cache: Optional[Dict[str, str]] = None
+        self._growth_cache: Optional[Dict[str, Any]] = None
+        self._user_cache: Dict[int, tuple] = {}
 
         if self.is_postgres:
             import psycopg
@@ -88,13 +93,65 @@ class Database:
 
         self.init_schema(default_download_url=default_download_url, default_contact_email=default_contact_email)
 
+    def close(self) -> None:
+        with self._lock:
+            if self._pg_conn is not None:
+                try:
+                    self._pg_conn.close()
+                except Exception:
+                    pass
+                self._pg_conn = None
+
+    def _open_pg_conn(self):
+        return self._pg_mod.connect(
+            self.database_url,
+            row_factory=self._dict_row,
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=20,
+            keepalives_interval=10,
+            keepalives_count=3,
+        )
+
     @contextlib.contextmanager
     def _connect(self):
         if self.is_postgres:
-            conn = self._pg_mod.connect(self.database_url, row_factory=self._dict_row)
-        else:
-            conn = sqlite3.connect(self.sqlite_path, check_same_thread=False, timeout=20.0)
-            conn.row_factory = sqlite3.Row
+            with self._lock:
+                now_m = time.monotonic()
+                if self._pg_conn is None or getattr(self._pg_conn, "closed", True):
+                    self._pg_conn = self._open_pg_conn()
+                else:
+                    try:
+                        if self._pg_conn.info.transaction_status != 0:
+                            self._pg_conn.rollback()
+                        if (now_m - self._pg_last_used_mono) >= 45.0:
+                            with self._pg_conn.cursor() as _c:
+                                _c.execute("SELECT 1")
+                            self._pg_conn.rollback()
+                    except Exception:
+                        try:
+                            self._pg_conn.close()
+                        except Exception:
+                            pass
+                        self._pg_conn = self._open_pg_conn()
+                conn = self._pg_conn
+                try:
+                    yield conn
+                    self._pg_last_used_mono = time.monotonic()
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        self._pg_conn = None
+                    raise
+            return
+
+        conn = sqlite3.connect(self.sqlite_path, check_same_thread=False, timeout=20.0)
+        conn.row_factory = sqlite3.Row
         try:
             yield conn
         finally:
@@ -296,14 +353,18 @@ class Database:
 
     def get_settings(self) -> Dict[str, str]:
         with self._lock:
+            if self._settings_cache is not None:
+                return dict(self._settings_cache)
             with self._connect() as conn:
                 rows = self._fetch_all(conn, "SELECT key, value FROM settings")
                 out = {r["key"]: r["value"] for r in rows}
                 out["download_url"] = resolve_download_url(out.get("download_url", ""))
+                self._settings_cache = dict(out)
                 return out
 
     def update_settings(self, updates: Dict[str, str]) -> Dict[str, str]:
         with self._lock:
+            self._settings_cache = None
             with self._connect() as conn:
                 for k, v in updates.items():
                     key = str(k).strip()
@@ -315,6 +376,7 @@ class Database:
                     else:
                         self._execute(conn, "INSERT INTO settings (key, value) VALUES (?, ?)", (key, str(v)))
                 conn.commit()
+                self._settings_cache = None
                 return self.get_settings()
 
     def add_notification(
@@ -676,14 +738,22 @@ class Database:
                     (pwd_hash, now_ts, now_ts, int(user_row["id"])),
                 )
                 conn.commit()
+                self._user_cache.pop(int(user_row["id"]), None)
                 updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_row["id"]),))
                 return self._format_user(updated) or {}
 
     def get_customer_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        uid = int(user_id)
+        now_m = time.monotonic()
         with self._lock:
+            cached = self._user_cache.get(uid)
+            if cached is not None and (now_m - cached[0]) < 20.0:
+                return dict(cached[1]) if cached[1] is not None else None
             with self._connect() as conn:
-                row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
-                return self._format_user(row)
+                row = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (uid,))
+                fmt = self._format_user(row)
+                self._user_cache[uid] = (now_m, dict(fmt) if fmt is not None else None)
+                return fmt
 
     def update_customer_profile(
         self,
@@ -721,6 +791,7 @@ class Database:
                         (name_clean, now_ts, int(user_id)),
                     )
                 conn.commit()
+                self._user_cache.pop(int(user_id), None)
                 updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
                 return self._format_user(updated) or {}
 
@@ -954,6 +1025,7 @@ class Database:
                     (status, now_ts, int(user_id)),
                 )
                 conn.commit()
+                self._user_cache.pop(int(user_id), None)
                 updated = self._fetch_one(conn, "SELECT * FROM users WHERE id = ?", (int(user_id),))
                 return self._format_user(updated) or {}
 
@@ -1036,6 +1108,13 @@ class Database:
         )
         return self._format_order(order)
 
+    _ORDER_COLS_NO_SHOT = (
+        "id, order_ref, user_id, customer_name, customer_email, mt5_login, plan_type, "
+        "bundle_id, bot_ids_json, amount_eur, paypal_tx, '' AS screenshot_data, "
+        "(CASE WHEN COALESCE(screenshot_data, '') <> '' THEN 1 ELSE 0 END) AS has_screenshot, "
+        "status, admin_note, license_key, created_at, reviewed_at"
+    )
+
     def _format_order(self, row: Optional[Dict[str, Any]], include_screenshot: bool = True) -> Optional[Dict[str, Any]]:
         if not row:
             return None
@@ -1045,7 +1124,7 @@ class Database:
         except Exception:
             out["bot_ids"] = []
         out["bot_names"] = [BOT_BY_ID[b]["name"] for b in out["bot_ids"] if b in BOT_BY_ID]
-        out["has_screenshot"] = bool(out.get("screenshot_data"))
+        out["has_screenshot"] = bool(int(out.get("has_screenshot") or 0) or bool(out.get("screenshot_data")))
         if not include_screenshot:
             out.pop("screenshot_data", None)
         return out
@@ -1066,12 +1145,13 @@ class Database:
         return out
 
     def get_orders(self, status_filter: str = "all", include_screenshots: bool = False) -> List[Dict[str, Any]]:
+        cols = "*" if include_screenshots else self._ORDER_COLS_NO_SHOT
         with self._lock:
             with self._connect() as conn:
                 if status_filter and status_filter != "all":
-                    rows = self._fetch_all(conn, "SELECT * FROM orders WHERE status = ? ORDER BY id DESC LIMIT 200", (status_filter,))
+                    rows = self._fetch_all(conn, f"SELECT {cols} FROM orders WHERE status = ? ORDER BY id DESC LIMIT 200", (status_filter,))
                 else:
-                    rows = self._fetch_all(conn, "SELECT * FROM orders ORDER BY id DESC LIMIT 200")
+                    rows = self._fetch_all(conn, f"SELECT {cols} FROM orders ORDER BY id DESC LIMIT 200")
                 return [self._format_order(r, include_screenshot=include_screenshots) for r in rows]
 
     def get_order_by_ref(self, order_ref: str, include_screenshot: bool = True) -> Optional[Dict[str, Any]]:
@@ -1483,6 +1563,7 @@ class Database:
                         (snap_json, meta_json, now_ts),
                     )
                 conn.commit()
+                self._growth_cache = {"has_data": True, "growth": snapshot, "meta": meta}
         acct_txt = f"MT5 #{meta['mt5_login']}" if meta["mt5_login"] else "Connected Account"
         self.add_notification(
             event_type="GROWTH_SYNC",
@@ -1494,10 +1575,14 @@ class Database:
 
     def get_published_growth(self) -> Dict[str, Any]:
         with self._lock:
+            if self._growth_cache is not None:
+                return dict(self._growth_cache)
             with self._connect() as conn:
                 row = self._fetch_one(conn, "SELECT snapshot_json, meta_json, updated_at FROM growth_publish WHERE id = 1")
                 if not row:
-                    return {"has_data": False, "growth": None, "meta": {}}
+                    res = {"has_data": False, "growth": None, "meta": {}}
+                    self._growth_cache = res
+                    return dict(res)
                 try:
                     snap = json.loads(row.get("snapshot_json") or "{}")
                 except Exception:
@@ -1506,8 +1591,105 @@ class Database:
                     meta = json.loads(row.get("meta_json") or "{}")
                 except Exception:
                     meta = {}
-                return {
+                res = {
                     "has_data": bool(snap and isinstance(snap, dict) and "portfolio" in snap),
                     "growth": snap,
                     "meta": meta,
+                }
+                self._growth_cache = res
+                return dict(res)
+
+    def get_admin_overview(self) -> Dict[str, Any]:
+        """Single-connection, low-payload overview fetch for /admin/api/overview."""
+        with self._lock:
+            now_ts = int(time.time())
+            with self._connect() as conn:
+                notif_items = self._fetch_all(conn, "SELECT * FROM notifications ORDER BY id DESC LIMIT 80")
+                unread_row = self._fetch_one(conn, "SELECT COUNT(*) AS cnt FROM notifications WHERE is_read = 0")
+                settings_rows = self._fetch_all(conn, "SELECT key, value FROM settings")
+                settings = {r["key"]: r["value"] for r in settings_rows}
+                settings["download_url"] = resolve_download_url(settings.get("download_url", ""))
+                self._settings_cache = dict(settings)
+
+                g_row = self._fetch_one(conn, "SELECT meta_json, (CASE WHEN COALESCE(snapshot_json, '') <> '' THEN 1 ELSE 0 END) AS has_snap FROM growth_publish WHERE id = 1")
+                if g_row:
+                    try:
+                        g_meta = json.loads(g_row.get("meta_json") or "{}")
+                    except Exception:
+                        g_meta = {}
+                    g_has = bool(int(g_row.get("has_snap") or 0))
+                else:
+                    g_meta = {}
+                    g_has = False
+
+                ord_rows = self._fetch_all(conn, f"SELECT {self._ORDER_COLS_NO_SHOT} FROM orders ORDER BY id DESC LIMIT 200")
+                orders = [self._format_order(r, include_screenshot=False) for r in ord_rows]
+                lic_rows = self._fetch_all(conn, "SELECT * FROM licenses ORDER BY id DESC LIMIT 300")
+                licenses = [self._format_license(r) for r in lic_rows]
+                mt5_requests = self._fetch_all(conn, "SELECT * FROM mt5_requests ORDER BY id DESC LIMIT 200")
+                email_logs = self._fetch_all(conn, "SELECT * FROM email_logs ORDER BY id DESC LIMIT 60")
+
+                user_rows = self._fetch_all(conn, "SELECT * FROM users ORDER BY id DESC LIMIT 300")
+                all_lics_meta = self._fetch_all(conn, "SELECT user_id, customer_email, status, expires_at FROM licenses")
+                all_ords_meta = self._fetch_all(conn, "SELECT user_id, customer_email, status, amount_eur FROM orders")
+                mt5_pending_row = self._fetch_one(conn, "SELECT COUNT(*) AS cnt FROM mt5_requests WHERE status = 'pending'")
+                ver_users_row = self._fetch_one(conn, "SELECT COUNT(*) AS cnt FROM users WHERE email_verified = 1")
+
+                users_out: List[Dict[str, Any]] = []
+                for u in user_rows:
+                    fmt = self._format_user(u)
+                    uid = int(u["id"])
+                    email_norm = str(u["email"]).strip().lower()
+                    u_lics = [
+                        l for l in all_lics_meta
+                        if int(l.get("user_id") or 0) == uid or str(l.get("customer_email") or "").strip().lower() == email_norm
+                    ]
+                    u_ords = [
+                        o for o in all_ords_meta
+                        if int(o.get("user_id") or 0) == uid or str(o.get("customer_email") or "").strip().lower() == email_norm
+                    ]
+                    fmt["license_count"] = len(u_lics)
+                    fmt["active_license_count"] = sum(
+                        1 for l in u_lics
+                        if l["status"] == "active" and (int(l.get("expires_at") or 0) == 0 or int(l["expires_at"]) > now_ts)
+                    )
+                    fmt["order_count"] = len(u_ords)
+                    fmt["total_spent_eur"] = round(
+                        sum(float(o.get("amount_eur") or 0) for o in u_ords if o["status"] == "approved"),
+                        2,
+                    )
+                    users_out.append(fmt)
+
+                pending_orders = sum(1 for o in all_ords_meta if o["status"] == "pending")
+                approved_orders = sum(1 for o in all_ords_meta if o["status"] == "approved")
+                total_revenue = round(sum(float(o["amount_eur"] or 0) for o in all_ords_meta if o["status"] == "approved"), 2)
+                active_licenses = sum(
+                    1 for l in all_lics_meta
+                    if l["status"] == "active" and (int(l.get("expires_at") or 0) == 0 or int(l["expires_at"]) > now_ts)
+                )
+
+                return {
+                    "orders": orders,
+                    "licenses": licenses,
+                    "mt5_requests": mt5_requests,
+                    "users": users_out,
+                    "notifications": notif_items,
+                    "unread_count": int((unread_row or {}).get("cnt", 0)),
+                    "email_logs": email_logs,
+                    "settings": settings,
+                    "growth_sync": {
+                        "has_data": g_has,
+                        "meta": g_meta,
+                        "token": settings.get("growth_sync_token", ""),
+                        "allowed_mt5": settings.get("growth_sync_mt5_login", ""),
+                    },
+                    "metrics": {
+                        "pending_orders": pending_orders,
+                        "approved_orders": approved_orders,
+                        "active_licenses": active_licenses,
+                        "total_licenses": len(all_lics_meta),
+                        "total_revenue_eur": total_revenue,
+                        "total_users": int((ver_users_row or {}).get("cnt", 0)),
+                        "pending_mt5_requests": int((mt5_pending_row or {}).get("cnt", 0)),
+                    },
                 }
